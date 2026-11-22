@@ -1,0 +1,6 @@
+{
+  "name": "RipeWise",
+  "description": "AI-powered produce ripeness scanner, storage & nutrition guide, and personalized culinary assistant.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
