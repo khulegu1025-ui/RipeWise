@@ -586,6 +586,72 @@ class ExampleRobolectricTest {
         assertEquals(RipenessStage.UNDERRIPE, underripeHigh.ripenessStage)
         assertTrue(underripeHigh.ripenessScore in 15..65)
     }
+
+    @Test
+    fun `report screen pinned back button returns to scanner`() {
+        val sample = ProduceVisionAiService.parseAnalysisJson(
+            """{"isProduce":true,"produceName":"Honeycrisp Apple"}""",
+            id = "id-back-test",
+            sampleKey = "apples"
+        )
+        var backClicked = false
+
+        composeRule.setContent {
+            com.example.ui.theme.RipeWiseTheme {
+                com.example.ui.screens.ProduceReportScreen(
+                    results = listOf(sample),
+                    selectedIndex = 0,
+                    totalAttempted = 1,
+                    isTranslating = false,
+                    translationWarning = null,
+                    preferences = com.example.model.UserPreferences(),
+                    chatState = com.example.ui.viewmodel.ChatUiState(),
+                    onSelectBatchIndex = {},
+                    onSelectLanguage = {},
+                    onRefreshForProfile = {},
+                    onDismissTranslationWarning = {},
+                    onBackToScanner = { backClicked = true },
+                    onOpenChat = {},
+                    onCloseChat = {},
+                    onSendChatMessage = {},
+                    onDismissChatError = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("report_back_button").assertExists().performClick()
+        composeRule.waitForIdle()
+        assertTrue(backClicked)
+    }
+
+    @Test
+    fun `personalization screen renders compact top-right language switch`() {
+        var selectedLanguage = AppLanguage.ENGLISH
+
+        composeRule.setContent {
+            com.example.ui.theme.RipeWiseTheme {
+                com.example.ui.screens.ProfilePreferencesScreen(
+                    preferences = com.example.model.UserPreferences(language = AppLanguage.ENGLISH),
+                    hasHardwareDepthSensor = false,
+                    onSelectLanguage = { selectedLanguage = it },
+                    onToggleNutrientNeed = {},
+                    onToggleDietaryGoal = {},
+                    onToggleHealthFocus = {},
+                    onToggleCookingTool = {},
+                    onSetLightingCalibration = {},
+                    onSetSpatialMode = {},
+                    onSetSpatialScaleHint = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("profile_lang_en").assertExists()
+        composeRule.onNodeWithTag("profile_lang_mn").assertExists().performClick()
+        composeRule.waitForIdle()
+        assertEquals(AppLanguage.MONGOLIAN, selectedLanguage)
+    }
 }
 
 

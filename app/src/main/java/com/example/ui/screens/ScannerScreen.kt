@@ -5,6 +5,7 @@ import android.view.ViewGroup
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -44,6 +45,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.FlashlightOff
+import androidx.compose.material.icons.rounded.FlashlightOn
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Straighten
@@ -61,6 +64,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -99,7 +103,8 @@ private const val TAG = "ScannerScreen"
 fun LanguageTogglePill(
     selected: AppLanguage,
     onSelect: (AppLanguage) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    tagPrefix: String = "home_lang"
 ) {
     Surface(
         shape = CircleShape,
@@ -119,7 +124,7 @@ fun LanguageTogglePill(
                         .heightIn(min = 38.dp)
                         .clip(CircleShape)
                         .clickable { onSelect(lang) }
-                        .testTag("home_lang_${lang.code}")
+                        .testTag("${tagPrefix}_${lang.code}")
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Text(
@@ -169,6 +174,25 @@ fun ScannerScreen(
     var cameraWarmingUpNotice by remember { mutableStateOf(false) }
     var cameraAvailable by remember { mutableStateOf(true) }
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
+    var boundCamera by remember { mutableStateOf<Camera?>(null) }
+    var hasFlashUnit by remember { mutableStateOf(false) }
+    var isTorchEnabled by remember { mutableStateOf(false) }
+
+    LaunchedEffect(boundCamera, isTorchEnabled, hasCameraPermission, cameraAvailable, hasFlashUnit, scanState) {
+        val activeCamera = boundCamera
+        val canUseTorch = hasCameraPermission &&
+            cameraAvailable &&
+            hasFlashUnit &&
+            scanState !is ScanUiState.Analyzing
+        if (activeCamera != null) {
+            runCatching {
+                activeCamera.cameraControl.enableTorch(canUseTorch && isTorchEnabled)
+            }
+        }
+        if (!canUseTorch && isTorchEnabled) {
+            isTorchEnabled = false
+        }
+    }
 
     val multiPhotoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 10),
@@ -492,12 +516,17 @@ fun ScannerScreen(
                     hasCameraPermission && cameraAvailable -> {
                         CameraPreviewStage(
                             spatialModeEnabled = preferences.spatialModeEnabled,
-                            onImageCaptureReady = {
-                                imageCapture = it
+                            onCameraReady = { capture, camera ->
+                                imageCapture = capture
+                                boundCamera = camera
+                                hasFlashUnit = camera.cameraInfo.hasFlashUnit()
                                 cameraWarmingUpNotice = false
                             },
                             onCameraUnavailable = {
                                 imageCapture = null
+                                boundCamera = null
+                                hasFlashUnit = false
+                                isTorchEnabled = false
                                 cameraAvailable = false
                             }
                         )
@@ -541,6 +570,55 @@ fun ScannerScreen(
                                 text = strings.calibrationBadge,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Color.White
+                            )
+                        }
+                    }
+                }
+
+                if (hasCameraPermission && cameraAvailable && hasFlashUnit && scanState !is ScanUiState.Analyzing) {
+                    Surface(
+                        shape = CircleShape,
+                        color = if (isTorchEnabled) {
+                            Color(0xFFFAD78A)
+                        } else {
+                            Color(0xFF19241D).copy(alpha = 0.72f)
+                        },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(14.dp)
+                            .border(
+                                width = 1.dp,
+                                color = if (isTorchEnabled) {
+                                    Color(0xFFFAD78A)
+                                } else {
+                                    Color.White.copy(alpha = 0.25f)
+                                },
+                                shape = CircleShape
+                            )
+                    ) {
+                        IconButton(
+                            onClick = { isTorchEnabled = !isTorchEnabled },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("camera_flashlight_button")
+                        ) {
+                            Icon(
+                                imageVector = if (isTorchEnabled) {
+                                    Icons.Rounded.FlashlightOn
+                                } else {
+                                    Icons.Rounded.FlashlightOff
+                                },
+                                contentDescription = if (isTorchEnabled) {
+                                    strings.flashlightOnContentDesc
+                                } else {
+                                    strings.flashlightOffContentDesc
+                                },
+                                tint = if (isTorchEnabled) {
+                                    Color(0xFF19241D)
+                                } else {
+                                    Color.White
+                                },
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }
@@ -772,7 +850,7 @@ private fun SampleProduceCard(
 @Composable
 private fun CameraPreviewStage(
     spatialModeEnabled: Boolean,
-    onImageCaptureReady: (ImageCapture) -> Unit,
+    onCameraReady: (ImageCapture, Camera) -> Unit,
     onCameraUnavailable: () -> Unit
 ) {
     val context = LocalContext.current
@@ -790,6 +868,7 @@ private fun CameraPreviewStage(
     DisposableEffect(lifecycleOwner) {
         var disposed = false
         var boundProvider: ProcessCameraProvider? = null
+        var boundCamera: Camera? = null
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         val executor = ContextCompat.getMainExecutor(context)
 
@@ -808,8 +887,9 @@ private fun CameraPreviewStage(
                 val selector = CameraSelector.DEFAULT_BACK_CAMERA
                 if (cameraProvider.hasCamera(selector)) {
                     cameraProvider.unbindAll()
-                    cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview, capture)
-                    onImageCaptureReady(capture)
+                    val camera = cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview, capture)
+                    boundCamera = camera
+                    onCameraReady(capture, camera)
                 } else {
                     onCameraUnavailable()
                 }
@@ -821,6 +901,7 @@ private fun CameraPreviewStage(
 
         onDispose {
             disposed = true
+            runCatching { boundCamera?.cameraControl?.enableTorch(false) }
             boundProvider?.unbindAll()
         }
     }

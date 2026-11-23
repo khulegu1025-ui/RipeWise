@@ -344,23 +344,39 @@ private fun ReportContentList(
         }
     }
 
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            start = 20.dp,
-            end = 20.dp,
-            top = 12.dp,
-            bottom = if (showBottomCtaSpacer) 92.dp else 24.dp
-        ),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        // Top Report Controls: Back / Batch Navigation + Copy + EN/МОН Language Switch
-        item {
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+    Column(modifier = modifier.fillMaxSize()) {
+        // Pinned Top Report Controls: Always-visible Back button + Batch / Category + Copy + Share + Refresh + EN/МОН
+        FlowRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                ) {
+                    IconButton(
+                        onClick = onBackToScanner,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("report_back_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = strings.backContentDesc,
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+
                 if (results.size > 1) {
                     Surface(
                         shape = CircleShape,
@@ -419,53 +435,102 @@ private fun ReportContentList(
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
+            }
 
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = if (copiedNoticeVisible) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surface
-                        },
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .clip(CircleShape)
-                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                            .clickable {
-                                val formatted = ProduceVisionAiService.formatAnalysisForCopy(
-                                    analysis = analysis,
-                                    language = preferences.language
-                                )
-                                clipboardManager.setText(AnnotatedString(formatted))
-                                copiedNoticeVisible = true
-                            }
-                            .testTag("copy_report_button")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (copiedNoticeVisible) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
-                                contentDescription = strings.copyContentDesc,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(15.dp)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = if (copiedNoticeVisible) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    },
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .clip(CircleShape)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                        .clickable {
+                            val formatted = ProduceVisionAiService.formatAnalysisForCopy(
+                                analysis = analysis,
+                                language = preferences.language
                             )
-                            Text(
-                                text = strings.copyInfoLabel,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                softWrap = false
-                            )
+                            clipboardManager.setText(AnnotatedString(formatted))
+                            copiedNoticeVisible = true
                         }
+                        .testTag("copy_report_button")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (copiedNoticeVisible) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                            contentDescription = strings.copyContentDesc,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = strings.copyInfoLabel,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
+                }
 
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .clip(CircleShape)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                        .clickable {
+                            val formatted = ProduceVisionAiService.formatAnalysisForCopy(
+                                analysis = analysis,
+                                language = preferences.language
+                            )
+                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_SUBJECT, analysis.produceName)
+                                putExtra(Intent.EXTRA_TEXT, formatted)
+                            }
+                            val chooser = Intent.createChooser(sendIntent, strings.shareChooserTitle).apply {
+                                if (context !is android.app.Activity) {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                            }
+                            runCatching { context.startActivity(chooser) }
+                        }
+                        .testTag("share_report_button")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Share,
+                            contentDescription = strings.shareContentDesc,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = strings.shareInfoLabel,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                }
+
+                if (!analysis.localImagePath.isNullOrBlank() || !analysis.sampleKey.isNullOrBlank()) {
                     Surface(
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.surface,
@@ -473,80 +538,44 @@ private fun ReportContentList(
                             .minimumInteractiveComponentSize()
                             .clip(CircleShape)
                             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                            .clickable {
-                                val formatted = ProduceVisionAiService.formatAnalysisForCopy(
-                                    analysis = analysis,
-                                    language = preferences.language
-                                )
-                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/plain"
-                                    putExtra(Intent.EXTRA_SUBJECT, analysis.produceName)
-                                    putExtra(Intent.EXTRA_TEXT, formatted)
-                                }
-                                val chooser = Intent.createChooser(sendIntent, strings.shareChooserTitle).apply {
-                                    if (context !is android.app.Activity) {
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                }
-                                runCatching { context.startActivity(chooser) }
+                            .clickable(enabled = !isTranslating) {
+                                onRefreshForProfile()
                             }
-                            .testTag("share_report_button")
+                            .testTag("refresh_report_button")
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        Box(
+                            modifier = Modifier.padding(10.dp),
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.Share,
-                                contentDescription = strings.shareContentDesc,
+                                imageVector = Icons.Rounded.Refresh,
+                                contentDescription = strings.refreshForProfileContentDesc,
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Text(
-                                text = strings.shareInfoLabel,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                softWrap = false
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
-
-                    if (!analysis.localImagePath.isNullOrBlank() || !analysis.sampleKey.isNullOrBlank()) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surface,
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .clip(CircleShape)
-                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                                .clickable(enabled = !isTranslating) {
-                                    onRefreshForProfile()
-                                }
-                                .testTag("refresh_report_button")
-                        ) {
-                            Box(
-                                modifier = Modifier.padding(10.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Refresh,
-                                    contentDescription = strings.refreshForProfileContentDesc,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    LanguageTogglePill(
-                        selected = preferences.language,
-                        onSelect = onSelectLanguage
-                    )
                 }
+
+                LanguageTogglePill(
+                    selected = preferences.language,
+                    onSelect = onSelectLanguage
+                )
             }
         }
+
+        LazyColumn(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentPadding = PaddingValues(
+                start = 20.dp,
+                end = 20.dp,
+                top = 4.dp,
+                bottom = if (showBottomCtaSpacer) 92.dp else 24.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
 
         if (copiedNoticeVisible) {
             item {
@@ -721,8 +750,7 @@ private fun ReportContentList(
                 HeroProduceCard(
                     analysis = pageResult,
                     language = preferences.language,
-                    strings = strings,
-                    onBackToScanner = onBackToScanner
+                    strings = strings
                 )
             }
         }
@@ -880,14 +908,14 @@ private fun ReportContentList(
             }
         }
     }
+    }
 }
 
 @Composable
 private fun HeroProduceCard(
     analysis: ProduceAnalysisResult,
     language: AppLanguage,
-    strings: UiStrings,
-    onBackToScanner: () -> Unit
+    strings: UiStrings
 ) {
     Box(
         modifier = Modifier
@@ -914,27 +942,6 @@ private fun HeroProduceCard(
                     )
                 )
         )
-
-        Surface(
-            shape = CircleShape,
-            color = Color.Black.copy(alpha = 0.45f),
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(14.dp)
-        ) {
-            IconButton(
-                onClick = onBackToScanner,
-                modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .testTag("report_back_button")
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = strings.backContentDesc,
-                    tint = Color.White
-                )
-            }
-        }
 
         Surface(
             shape = CircleShape,

@@ -105,7 +105,9 @@ data class UiStrings(
     val pantryClearDialogBody: String,
     val confirmClearLabel: String,
     val cancelLabel: String,
-    val openSettingsLabel: String
+    val openSettingsLabel: String,
+    val flashlightOnContentDesc: String,
+    val flashlightOffContentDesc: String
 ) {
     fun filterLabel(tab: ResultFilterTab): String = when (tab) {
         ResultFilterTab.ALL -> filterAll
@@ -220,7 +222,9 @@ private val EnglishStrings = UiStrings(
     pantryClearDialogBody = "This deletes all saved scan reports, AI chat history, and local produce photos from this device.",
     confirmClearLabel = "Clear All",
     cancelLabel = "Cancel",
-    openSettingsLabel = "Open Settings"
+    openSettingsLabel = "Open Settings",
+    flashlightOnContentDesc = "Turn flashlight off",
+    flashlightOffContentDesc = "Turn flashlight on"
 )
 
 private val MongolianStrings = UiStrings(
@@ -327,7 +331,9 @@ private val MongolianStrings = UiStrings(
     pantryClearDialogBody = "Энэ нь төхөөрөмж дээрх бүх тайлан, AI харилцан яриа болон зургуудыг устгана.",
     confirmClearLabel = "Устгах",
     cancelLabel = "Болих",
-    openSettingsLabel = "Тохиргоо нээх"
+    openSettingsLabel = "Тохиргоо нээх",
+    flashlightOnContentDesc = "Гар чийдэн унтраах",
+    flashlightOffContentDesc = "Гар чийдэн асаах"
 )
 
 fun stringsFor(language: AppLanguage): UiStrings = when (language) {
