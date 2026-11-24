@@ -92,6 +92,12 @@ class ProduceVisionAiService {
             "estimatedWeightGrams" to Schema.integer(
                 description = "Approximate weight of the visible produce item(s) in grams"
             ),
+            "estimatedCaloriesKcal" to Schema.integer(
+                description = "Estimated total calories (kcal) for the edible portion of the visible produce weight"
+            ),
+            "caloriesPer100g" to Schema.integer(
+                description = "Typical USDA calories per 100g edible portion for this produce"
+            ),
             "servingWeightSummary" to Schema.string(
                 description = "Short portion & calories note in the requested output language"
             ),
@@ -160,15 +166,71 @@ class ProduceVisionAiService {
                         "method" to Schema.string(),
                         "prepMinutes" to Schema.integer(),
                         "nutrientTip" to Schema.string(),
-                        "pairing" to Schema.string()
+                        "pairing" to Schema.string(),
+                        "goalFocus" to Schema.string()
                     )
                 ),
-                description = "2-3 personalized cooking suggestions in the requested output language"
+                description = "3-4 personal goal-focused food & cooking suggestions in the requested output language"
             ),
             "quickQuestions" to Schema.array(
                 items = Schema.string(),
                 description = "3 short follow-up questions in the requested output language"
             )
+        )
+    )
+
+    private val translationSchema = Schema.obj(
+        properties = mapOf(
+            "produceName" to Schema.string(),
+            "variety" to Schema.string(),
+            "category" to Schema.string(),
+            "servingWeightSummary" to Schema.string(),
+            "lightingNote" to Schema.string(),
+            "visualCues" to Schema.array(items = Schema.string()),
+            "bestTimeToConsume" to Schema.string(),
+            "storageTitle" to Schema.string(),
+            "storageInstructions" to Schema.string(),
+            "storageAvoidTip" to Schema.string(),
+            "nutrientPreservationRule" to Schema.string(),
+            "vitamins" to Schema.array(
+                items = Schema.obj(
+                    properties = mapOf(
+                        "name" to Schema.string(),
+                        "amount" to Schema.string(),
+                        "benefit" to Schema.string()
+                    )
+                )
+            ),
+            "nutrients" to Schema.array(
+                items = Schema.obj(
+                    properties = mapOf(
+                        "name" to Schema.string(),
+                        "amount" to Schema.string(),
+                        "benefit" to Schema.string()
+                    )
+                )
+            ),
+            "healthBenefits" to Schema.array(
+                items = Schema.obj(
+                    properties = mapOf(
+                        "category" to Schema.string(),
+                        "title" to Schema.string(),
+                        "detail" to Schema.string()
+                    )
+                )
+            ),
+            "cookingSuggestions" to Schema.array(
+                items = Schema.obj(
+                    properties = mapOf(
+                        "title" to Schema.string(),
+                        "method" to Schema.string(),
+                        "nutrientTip" to Schema.string(),
+                        "pairing" to Schema.string(),
+                        "goalFocus" to Schema.string()
+                    )
+                )
+            ),
+            "quickQuestions" to Schema.array(items = Schema.string())
         )
     )
 
@@ -179,9 +241,21 @@ class ProduceVisionAiService {
         maxOutputTokens = 3072
     }
 
+    private val translationGenerationConfig = generationConfig {
+        responseMimeType = "application/json"
+        responseSchema = translationSchema
+        temperature = 0.05f
+        maxOutputTokens = 2048
+    }
+
     private fun visionModelFor(modelName: String) = Firebase.ai.generativeModel(
         modelName = modelName,
         generationConfig = visionGenerationConfig
+    )
+
+    private fun translationModelFor(modelName: String) = Firebase.ai.generativeModel(
+        modelName = modelName,
+        generationConfig = translationGenerationConfig
     )
 
     suspend fun analyzeProduce(
@@ -204,9 +278,9 @@ class ProduceVisionAiService {
         val languageInstruction = when (preferences.language) {
             AppLanguage.MONGOLIAN ->
                 """
-                OUTPUT LANGUAGE (STRICT MONGOLIAN / КИРИЛЛ):
-                Write EVERY single text field in natural, fluent Mongolian Cyrillic (Монгол хэл), with ZERO English words left untranslated.
-                Translate categories ("Жимс", "Хүнсний ногоо"), cooking methods ("Уураар жигнэх", "Түүхийгээр", "Агаар шарагч"), benefit categories ("Арьсны эрүүл мэнд", "Дархлаа", "Хоол боловсруулалт"), vitamin names ("С витамин", "Д витамин", "Эслэг", "Төмөр"), and daily values ("20% ӨХХ") into Mongolian.
+                OUTPUT LANGUAGE (STRICT MONGOLIAN CYRILLIC ONLY):
+                Write EVERY text field in clean, natural Mongolian Cyrillic (Монгол кирилл: А–Я, Ө, Ү) with ZERO English, Arabic, or mixed-script characters (e.g., write 'Төмс' using Cyrillic 'с', NEVER stray non-Cyrillic letters).
+                Translate produce names, categories ("Жимс", "Хүнсний ногоо"), cooking methods ("Уураар жигнэх", "Түүхийгээр", "Агаар шарагч"), goalFocus tags, vitamin names ("С витамин", "Д витамин", "Эслэг", "Төмөр"), and daily values ("20% ӨХХ") into Mongolian.
                 Keep ONLY ripenessStage as the enum token (UNDERRIPE, PERFECTLY_RIPE, OVERRIPE, DAMAGED).
                 """.trimIndent()
             AppLanguage.ENGLISH ->
@@ -256,7 +330,8 @@ class ProduceVisionAiService {
             BOTANICAL & SCORING ACCURACY RULES:
             - Inspect stem/calyx dryness, lenticels, sugar speckling, peel gloss vs wrinkling, and bruising carefully.
             - Keep ripenessScore strictly aligned with ripenessStage: UNDERRIPE=25..62, PERFECTLY_RIPE=72..94, OVERRIPE=45..68, DAMAGED=5..38.
-            - Use realistic USDA cultivar dimensions (cm), weight (g), and kcal in servingWeightSummary.
+            - Use realistic USDA cultivar dimensions (cm), weight (g), caloriesPer100g, estimatedCaloriesKcal for the visible portion, and kcal in servingWeightSummary.
+            - Provide 3-4 goal-focused cookingSuggestions directly matching the user's dietaryGoals, nutrientNeeds, healthFocuses, and cookingTools, and fill each recipe's goalFocus tag cleanly.
             - Keep every text value crisp (<= 18 words per field) for fast, scannable reading.
             USER PROFILE:
             - Dietary & Weight Goals: $localizedGoals
@@ -307,42 +382,155 @@ class ProduceVisionAiService {
     ): ProduceAnalysisResult {
         if (result.languageCode == targetLanguage.code) return result
 
-        val sourceJson = serializeAnalysisToJson(result)
+        val isMn = targetLanguage == AppLanguage.MONGOLIAN
+        val compactPayload = JSONObject().apply {
+            put("produceName", result.produceName)
+            put("variety", result.variety)
+            put("category", result.category)
+            put("servingWeightSummary", result.servingWeightSummary)
+            put("lightingNote", result.lightingNote)
+            put("visualCues", JSONArray(result.visualCues))
+            put("bestTimeToConsume", result.bestTimeToConsume)
+            put("storageTitle", result.storageTitle)
+            put("storageInstructions", result.storageInstructions)
+            put("storageAvoidTip", result.storageAvoidTip)
+            put("nutrientPreservationRule", result.nutrientPreservationRule)
+            put("vitamins", JSONArray().apply {
+                result.vitamins.forEach { v ->
+                    put(JSONObject().apply {
+                        put("name", v.name)
+                        put("amount", v.amount)
+                        put("benefit", v.benefit)
+                    })
+                }
+            })
+            put("nutrients", JSONArray().apply {
+                result.nutrients.forEach { n ->
+                    put(JSONObject().apply {
+                        put("name", n.name)
+                        put("amount", n.amount)
+                        put("benefit", n.benefit)
+                    })
+                }
+            })
+            put("healthBenefits", JSONArray().apply {
+                result.healthBenefits.forEach { b ->
+                    put(JSONObject().apply {
+                        put("category", b.category)
+                        put("title", b.title)
+                        put("detail", b.detail)
+                    })
+                }
+            })
+            put("cookingSuggestions", JSONArray().apply {
+                result.cookingSuggestions.forEach { c ->
+                    put(JSONObject().apply {
+                        put("title", c.title)
+                        put("method", c.method)
+                        put("nutrientTip", c.nutrientTip)
+                        put("pairing", c.pairing)
+                        put("goalFocus", c.goalFocus)
+                    })
+                }
+            })
+            put("quickQuestions", JSONArray(result.quickQuestions))
+        }.toString()
+
         val langDirective = when (targetLanguage) {
             AppLanguage.MONGOLIAN ->
                 """
-                Translate EVERY natural-language string value in this produce JSON into fluent, natural Mongolian Cyrillic (Монгол хэл) with ZERO leftover English words or Latin units.
-                Convert "% DV" -> "% ӨХХ", "DV" -> "ӨХХ", "kcal" -> "ккал", "min" -> "мин", "g" -> "г", categories ("Жимс", "Хүнсний ногоо"), cooking methods, vitamin names ("С витамин", "Д витамин", "В витамин", "Эслэг", "Төмөр"), visual cues, storage tips, and quick questions into Mongolian.
-                Keep ONLY numeric values, ripenessStage enum, and JSON property keys unchanged.
+                Translate EVERY string value in this compact JSON into pure Mongolian Cyrillic (Монгол кирилл: А–Я, Ө, Ү).
+                CRITICAL: NEVER leave English words or mix Arabic/Turkish/Latin lookalike letters (e.g. write 'Төмс', NEVER mix non-Cyrillic letters).
+                Convert units/names cleanly: "% DV" -> "% ӨХХ", "kcal" -> "ккал", "g" -> "г", vitamins ("С витамин", "Д витамин", "Эслэг", "Төмөр"). Keep array sizes identical.
                 """.trimIndent()
             AppLanguage.ENGLISH ->
-                "Translate EVERY natural-language string value in this produce JSON into natural, concise English. Keep numbers, ripenessStage enum, and JSON keys identical."
+                "Translate EVERY string value in this compact JSON into clear, natural English. Keep array sizes identical."
         }
 
         val requestContent = content {
-            text("$langDirective\n\nSOURCE JSON:\n$sourceJson")
+            text("$langDirective\n$compactPayload")
         }
 
-        val translatedJson = executeVisionWithFallback(requestContent, targetLanguage) {}
-        if (translatedJson.isNullOrBlank()) {
+        val translatedJsonText = executeTranslationWithFallback(requestContent)
+        if (translatedJsonText.isNullOrBlank()) {
             throw IllegalStateException("Translation returned empty JSON.")
         }
 
+        val tJson = JSONObject(translatedJsonText)
         val localizedSpatialNote = buildSpatialMethodNote(
             language = targetLanguage,
             spatialModeEnabled = spatialModeEnabled,
             hasHardwareDepthSensor = hasHardwareDepthSensor
         )
 
-        return parseAnalysisJson(
-            jsonText = translatedJson,
-            id = result.id,
-            languageCode = targetLanguage.code,
+        val translatedVitamins = tJson.optJSONArray("vitamins").toNutritionList(isMn).ifEmpty { result.vitamins }
+        val translatedNutrients = tJson.optJSONArray("nutrients").toNutritionList(isMn).ifEmpty { result.nutrients }
+        val translatedBenefits = tJson.optJSONArray("healthBenefits").toHealthBenefitList(isMn).ifEmpty { result.healthBenefits }
+        val translatedRecipesRaw = tJson.optJSONArray("cookingSuggestions")
+        val translatedRecipes = if (translatedRecipesRaw != null && translatedRecipesRaw.length() > 0) {
+            (0 until translatedRecipesRaw.length()).mapNotNull { idx ->
+                val obj = translatedRecipesRaw.optJSONObject(idx) ?: return@mapNotNull null
+                val orig = result.cookingSuggestions.getOrNull(idx)
+                CookingSuggestion(
+                    title = sanitizeLocalizedText(obj.safeString("title", orig?.title.orEmpty()), isMn),
+                    method = sanitizeLocalizedText(obj.safeString("method", orig?.method.orEmpty()), isMn),
+                    prepMinutes = orig?.prepMinutes ?: 10,
+                    nutrientTip = sanitizeLocalizedText(obj.safeString("nutrientTip", orig?.nutrientTip.orEmpty()), isMn),
+                    pairing = sanitizeLocalizedText(obj.safeString("pairing", orig?.pairing.orEmpty()), isMn),
+                    goalFocus = sanitizeLocalizedText(obj.safeString("goalFocus", orig?.goalFocus.orEmpty()), isMn)
+                )
+            }
+        } else {
+            result.cookingSuggestions
+        }
+
+        return result.copy(
+            produceName = sanitizeLocalizedText(tJson.safeString("produceName", result.produceName), isMn),
+            variety = sanitizeLocalizedText(tJson.safeString("variety", result.variety), isMn),
+            category = sanitizeLocalizedText(tJson.safeString("category", result.category), isMn),
+            servingWeightSummary = sanitizeLocalizedText(tJson.safeString("servingWeightSummary", result.servingWeightSummary), isMn),
             spatialMethodNote = localizedSpatialNote,
-            localImagePath = result.localImagePath,
-            sampleKey = result.sampleKey,
-            scannedAtMillis = result.scannedAtMillis
+            lightingNote = sanitizeLocalizedText(tJson.safeString("lightingNote", result.lightingNote), isMn),
+            visualCues = tJson.optJSONArray("visualCues").toStringList(isMn).ifEmpty { result.visualCues },
+            bestTimeToConsume = sanitizeLocalizedText(tJson.safeString("bestTimeToConsume", result.bestTimeToConsume), isMn),
+            storageTitle = sanitizeLocalizedText(tJson.safeString("storageTitle", result.storageTitle), isMn),
+            storageInstructions = sanitizeLocalizedText(tJson.safeString("storageInstructions", result.storageInstructions), isMn),
+            storageAvoidTip = sanitizeLocalizedText(tJson.safeString("storageAvoidTip", result.storageAvoidTip), isMn),
+            nutrientPreservationRule = sanitizeLocalizedText(tJson.safeString("nutrientPreservationRule", result.nutrientPreservationRule), isMn),
+            vitamins = translatedVitamins,
+            nutrients = translatedNutrients,
+            healthBenefits = translatedBenefits,
+            cookingSuggestions = translatedRecipes,
+            quickQuestions = tJson.optJSONArray("quickQuestions").toStringList(isMn).ifEmpty { result.quickQuestions },
+            languageCode = targetLanguage.code
         )
+    }
+
+    private suspend fun executeTranslationWithFallback(requestContent: Content): String? {
+        val candidates = MODEL_CANDIDATES.filterNot { isModelTemporarilyBlocked(it) }
+            .ifEmpty { MODEL_CANDIDATES.filterNot { permanentlyUnavailableModels[it] == true }.ifEmpty { MODEL_CANDIDATES } }
+
+        var lastError: Exception? = null
+        for (modelName in candidates) {
+            try {
+                return withContext(Dispatchers.IO) {
+                    withTimeout(20_000L) {
+                        translationModelFor(modelName).generateContent(requestContent).text
+                    }
+                }
+            } catch (e: CancellationException) {
+                if (e is TimeoutCancellationException) {
+                    lastError = e
+                } else {
+                    throw e
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Translation model $modelName failed: ${e.message}", e)
+                recordModelFailure(modelName, e)
+                lastError = e
+            }
+        }
+        throw lastError ?: IllegalStateException("All translation models failed.")
     }
 
     private suspend fun executeVisionWithFallback(
@@ -454,7 +642,7 @@ class ProduceVisionAiService {
             You are RipeWise AI — a warm, calm culinary nutritionist and produce expert.
             $replyLangRule
             SCANNED PRODUCE: ${analysis.produceName} (${analysis.variety}, ${analysis.category}), Stage: ${analysis.ripenessStage.localizedLabel(preferences.language)} (${analysis.ripenessScore}/100).
-            Estimated 3D Size & Weight: ~${analysis.estimatedLengthCm} × ${analysis.estimatedWidthCm} cm, ~${analysis.estimatedWeightGrams}g (${analysis.servingWeightSummary}).
+            Estimated 3D Size, Weight & Calories: ~${analysis.estimatedLengthCm} × ${analysis.estimatedWidthCm} cm, ~${analysis.estimatedWeightGrams}g, ~${analysis.estimatedCaloriesKcal} kcal (${analysis.caloriesPer100g} kcal/100g; ${analysis.servingWeightSummary}).
             Cues: ${analysis.visualCues.joinToString("; ")}.
             Window: ${analysis.bestTimeToConsume}. Storage: ${analysis.storageTitle} — ${analysis.storageInstructions} (Avoid: ${analysis.storageAvoidTip}).
             Nutrient Rule: ${analysis.nutrientPreservationRule}.
@@ -642,6 +830,10 @@ class ProduceVisionAiService {
                 if (isMn) {
                     appendLine("Боловсролт: $stageLabel (${analysis.ripenessScore}/100, ${analysis.confidencePercent}% таарц)")
                     appendLine("Ойролцоо 3D хэмжээ ба жин: ~${analysis.estimatedLengthCm} × ${analysis.estimatedWidthCm} $lengthUnit · ~${analysis.estimatedWeightGrams}$weightUnit (${analysis.servingWeightSummary})")
+                    if (analysis.estimatedCaloriesKcal > 0) {
+                        val per100 = if (analysis.caloriesPer100g > 0) " (${analysis.caloriesPer100g} ккал/100$weightUnit)" else ""
+                        appendLine("Илчлэг: ~${analysis.estimatedCaloriesKcal} ккал$per100")
+                    }
                     appendLine("Хэрэглэх хугацаа: ${analysis.bestTimeToConsume}")
                     if (analysis.visualCues.isNotEmpty()) {
                         appendLine("Илэрсэн шинж тэмдгүүд: ${analysis.visualCues.joinToString("; ")}")
@@ -670,6 +862,10 @@ class ProduceVisionAiService {
                 } else {
                     appendLine("Ripeness: $stageLabel (${analysis.ripenessScore}/100, ${analysis.confidencePercent}% match)")
                     appendLine("3D Size & Weight: ~${analysis.estimatedLengthCm} × ${analysis.estimatedWidthCm} $lengthUnit · ~${analysis.estimatedWeightGrams}$weightUnit (${analysis.servingWeightSummary})")
+                    if (analysis.estimatedCaloriesKcal > 0) {
+                        val per100 = if (analysis.caloriesPer100g > 0) " (${analysis.caloriesPer100g} kcal/100$weightUnit)" else ""
+                        appendLine("Calories: ~${analysis.estimatedCaloriesKcal} kcal$per100")
+                    }
                     appendLine("Best Time to Consume: ${analysis.bestTimeToConsume}")
                     if (analysis.visualCues.isNotEmpty()) {
                         appendLine("Visual Cues: ${analysis.visualCues.joinToString("; ")}")
@@ -722,7 +918,7 @@ class ProduceVisionAiService {
                 )
             }
 
-            val visualCues = json.optJSONArray("visualCues").toStringList()
+            val visualCues = json.optJSONArray("visualCues").toStringList(isMn)
             val legacyHighlights = json.optJSONArray("nutritionHighlights").toNutritionList(isMn)
             val parsedVitamins = json.optJSONArray("vitamins").toNutritionList(isMn)
             val parsedNutrients = json.optJSONArray("nutrients").toNutritionList(isMn)
@@ -741,7 +937,7 @@ class ProduceVisionAiService {
 
             val healthBenefits = json.optJSONArray("healthBenefits").toHealthBenefitList(isMn)
             val cookingSuggestions = json.optJSONArray("cookingSuggestions").toCookingList(isMn)
-            val quickQuestions = json.optJSONArray("quickQuestions").toStringList()
+            val quickQuestions = json.optJSONArray("quickQuestions").toStringList(isMn)
             val minDays = json.optInt("daysRemainingMin", 1).coerceAtLeast(0)
             val maxDays = json.optInt("daysRemainingMax", minDays.coerceAtLeast(3)).coerceAtLeast(minDays)
 
@@ -750,6 +946,33 @@ class ProduceVisionAiService {
             val widthCm = json.optDouble("estimatedWidthCm", 6.5)
                 .let { if (it.isNaN() || it <= 0.0) 6.5 else it }
             val weightGrams = json.optInt("estimatedWeightGrams", 160).coerceIn(5, 10000)
+            val servingSummary = sanitizeLocalizedText(
+                json.safeString(
+                    "servingWeightSummary",
+                    if (isMn) "~1 дунд хэмжээ (~${weightGrams}г)" else "~1 medium portion (~${weightGrams}g)"
+                ),
+                isMn
+            )
+            val rawTotalKcal = json.optInt("estimatedCaloriesKcal", 0).coerceAtLeast(0)
+            val rawPer100g = json.optInt("caloriesPer100g", 0).coerceAtLeast(0)
+            val kcalMatch = Regex("(\\d+)\\s*(?:kcal|ккал|cal)", RegexOption.IGNORE_CASE)
+                .find(servingSummary)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.toIntOrNull()
+                ?.coerceAtLeast(0)
+                ?: 0
+            val resolvedCaloriesKcal = when {
+                rawTotalKcal > 0 -> rawTotalKcal
+                rawPer100g > 0 -> kotlin.math.round(rawPer100g * weightGrams / 100.0).toInt().coerceAtLeast(1)
+                kcalMatch > 0 -> kcalMatch
+                else -> 0
+            }
+            val resolvedCaloriesPer100g = when {
+                rawPer100g > 0 -> rawPer100g
+                resolvedCaloriesKcal > 0 -> kotlin.math.round(resolvedCaloriesKcal * 100.0 / weightGrams.coerceAtLeast(1)).toInt().coerceAtLeast(1)
+                else -> 0
+            }
 
             val defaultSpatialNote = spatialMethodNote ?: if (isMn) {
                 "AI 3D орон зайн баримжаа хэмжилт"
@@ -773,23 +996,34 @@ class ProduceVisionAiService {
 
             return ProduceAnalysisResult(
                 id = id,
-                produceName = json.safeString("produceName", if (isMn) "Шинэ бүтээгдэхүүн" else "Fresh Produce"),
-                variety = json.safeString("variety", if (isMn) "Улирлын сорт" else "Seasonal Variety"),
-                category = json.safeString("category", if (isMn) "Жимс / Ногоо" else "Produce"),
+                produceName = sanitizeLocalizedText(
+                    json.safeString("produceName", if (isMn) "Шинэ бүтээгдэхүүн" else "Fresh Produce"),
+                    isMn
+                ),
+                variety = sanitizeLocalizedText(
+                    json.safeString("variety", if (isMn) "Улирлын сорт" else "Seasonal Variety"),
+                    isMn
+                ),
+                category = sanitizeLocalizedText(
+                    json.safeString("category", if (isMn) "Жимс / Ногоо" else "Produce"),
+                    isMn
+                ),
                 ripenessStage = stage,
                 ripenessScore = calibratedScore,
                 confidencePercent = json.optInt("confidencePercent", 92).coerceIn(50, 99),
                 estimatedLengthCm = (Math.round(lengthCm * 10.0) / 10.0),
                 estimatedWidthCm = (Math.round(widthCm * 10.0) / 10.0),
                 estimatedWeightGrams = weightGrams,
-                servingWeightSummary = json.safeString(
-                    "servingWeightSummary",
-                    if (isMn) "~1 дунд хэмжээ (~${weightGrams}г)" else "~1 medium portion (~${weightGrams}g)"
-                ),
+                estimatedCaloriesKcal = resolvedCaloriesKcal,
+                caloriesPer100g = resolvedCaloriesPer100g,
+                servingWeightSummary = servingSummary,
                 spatialMethodNote = resolvedSpatialNote,
-                lightingNote = json.safeString(
-                    "lightingNote",
-                    if (isMn) "Өрөөний гэрэлд тохируулсан" else "Balanced for ambient lighting"
+                lightingNote = sanitizeLocalizedText(
+                    json.safeString(
+                        "lightingNote",
+                        if (isMn) "Өрөөний гэрэлд тохируулсан" else "Balanced for ambient lighting"
+                    ),
+                    isMn
                 ),
                 visualCues = visualCues.ifEmpty {
                     listOf(
@@ -797,28 +1031,43 @@ class ProduceVisionAiService {
                         else "Natural skin tone and surface texture analyzed"
                     )
                 },
-                bestTimeToConsume = json.safeString(
-                    "bestTimeToConsume",
-                    if (isMn) "2–3 хоногийн дотор хэрэглэвэл тохиромжтой" else "Enjoy within 2-3 days"
+                bestTimeToConsume = sanitizeLocalizedText(
+                    json.safeString(
+                        "bestTimeToConsume",
+                        if (isMn) "2–3 хоногийн дотор хэрэглэвэл тохиромжтой" else "Enjoy within 2-3 days"
+                    ),
+                    isMn
                 ),
                 daysRemainingMin = minDays,
                 daysRemainingMax = maxDays,
-                storageTitle = json.safeString(
-                    "storageTitle",
-                    if (isMn) "Сэрүүн, хуурай газар" else "Cool, Dry Spot"
+                storageTitle = sanitizeLocalizedText(
+                    json.safeString(
+                        "storageTitle",
+                        if (isMn) "Сэрүүн, хуурай газар" else "Cool, Dry Spot"
+                    ),
+                    isMn
                 ),
-                storageInstructions = json.safeString(
-                    "storageInstructions",
-                    if (isMn) "Нарны шууд тусгалаас хол сэрүүн орчинд хадгална уу." else "Store away from direct sunlight."
+                storageInstructions = sanitizeLocalizedText(
+                    json.safeString(
+                        "storageInstructions",
+                        if (isMn) "Нарны шууд тусгалаас хол сэрүүн орчинд хадгална уу." else "Store away from direct sunlight."
+                    ),
+                    isMn
                 ),
-                storageAvoidTip = json.safeString(
-                    "storageAvoidTip",
-                    if (isMn) "Чийгтэй үед нь битүү уутанд хийж хадгалахаас зайлсхий." else "Avoid sealing tightly while damp."
+                storageAvoidTip = sanitizeLocalizedText(
+                    json.safeString(
+                        "storageAvoidTip",
+                        if (isMn) "Чийгтэй үед нь битүү уутанд хийж хадгалахаас зайлсхий." else "Avoid sealing tightly while damp."
+                    ),
+                    isMn
                 ),
-                nutrientPreservationRule = json.safeString(
-                    "nutrientPreservationRule",
-                    if (isMn) "Эмзэг витаминуудыг хамгаалахын тулд зөөлөн дулаанаар бэлтгэнэ үү."
-                    else "Keep heat gentle to preserve delicate vitamins."
+                nutrientPreservationRule = sanitizeLocalizedText(
+                    json.safeString(
+                        "nutrientPreservationRule",
+                        if (isMn) "Эмзэг витаминуудыг хамгаалахын тулд зөөлөн дулаанаар бэлтгэнэ үү."
+                        else "Keep heat gentle to preserve delicate vitamins."
+                    ),
+                    isMn
                 ),
                 vitamins = finalVitamins,
                 nutrients = finalNutrients,
@@ -858,6 +1107,8 @@ class ProduceVisionAiService {
                 put("estimatedLengthCm", result.estimatedLengthCm)
                 put("estimatedWidthCm", result.estimatedWidthCm)
                 put("estimatedWeightGrams", result.estimatedWeightGrams)
+                put("estimatedCaloriesKcal", result.estimatedCaloriesKcal)
+                put("caloriesPer100g", result.caloriesPer100g)
                 put("servingWeightSummary", result.servingWeightSummary)
                 put("spatialMethodNote", result.spatialMethodNote)
                 put("lightingNote", result.lightingNote)
@@ -904,6 +1155,9 @@ class ProduceVisionAiService {
                             put("prepMinutes", item.prepMinutes)
                             put("nutrientTip", item.nutrientTip)
                             put("pairing", item.pairing)
+                            if (item.goalFocus.isNotBlank()) {
+                                put("goalFocus", item.goalFocus)
+                            }
                         })
                     }
                 })
@@ -911,6 +1165,85 @@ class ProduceVisionAiService {
                 put("languageCode", result.languageCode)
             }
             return root.toString()
+        }
+
+        fun sanitizeLocalizedText(raw: String, isMongolian: Boolean): String {
+            var cleaned = raw.trim()
+            if (cleaned.isEmpty()) return cleaned
+            if (!isMongolian) return cleaned
+
+            // Replace common Arabic / RTL / stray lookalikes seen in LLM outputs (e.g. 'Төмس' -> 'Төмс')
+            val strayCharMap = mapOf(
+                '\u0633' to 'с', // Arabic Seen
+                '\u0635' to 'с', // Arabic Sad
+                '\u0627' to 'а', // Arabic Alef
+                '\u0648' to 'о', // Arabic Waw
+                '\u064A' to 'и', // Arabic Yeh
+                '\u0649' to 'и', // Arabic Alef Maksura
+                '\u0643' to 'к', // Arabic Kaf
+                '\u0645' to 'м', // Arabic Meem
+                '\u0646' to 'н', // Arabic Noon
+                '\u062A' to 'т', // Arabic Teh
+                '\u0631' to 'р'  // Arabic Reh
+            )
+            val sb = StringBuilder(cleaned.length)
+            for (ch in cleaned) {
+                val mapped = strayCharMap[ch]
+                when {
+                    mapped != null -> sb.append(mapped)
+                    ch in '\u0600'..'\u06FF' || ch in '\u0750'..'\u077F' || ch in '\u08A0'..'\u08FF' -> Unit
+                    ch in '\u0590'..'\u05FF' -> Unit
+                    ch in '\u200E'..'\u200F' || ch in '\u202A'..'\u202E' || ch in '\u2066'..'\u2069' -> Unit
+                    else -> sb.append(ch)
+                }
+            }
+            cleaned = sb.toString()
+
+            // Repair accidental Latin lookalike letters embedded inside Cyrillic words
+            val latinToCyrillicLookalike = mapOf(
+                'A' to 'А', 'a' to 'а', 'B' to 'В', 'C' to 'С', 'c' to 'с',
+                'E' to 'Е', 'e' to 'е', 'H' to 'Н', 'K' to 'К', 'k' to 'к',
+                'M' to 'М', 'O' to 'О', 'o' to 'о', 'P' to 'Р', 'p' to 'р',
+                'T' to 'Т', 'X' to 'Х', 'x' to 'х', 'y' to 'у'
+            )
+            cleaned = cleaned.split(Regex("(?<=\\s)|(?=\\s)")).joinToString("") { token ->
+                val hasCyrillic = token.any { it in '\u0400'..'\u04FF' }
+                val hasLatin = token.any { it in 'A'..'Z' || it in 'a'..'z' }
+                if (hasCyrillic && hasLatin) {
+                    token.map { ch -> latinToCyrillicLookalike[ch] ?: ch }.joinToString("")
+                } else {
+                    token
+                }
+            }
+
+            // Replace common leftover English nutrition / unit words cleanly
+            val replacements = listOf(
+                Regex("\\bVitamin\\s+C\\b", RegexOption.IGNORE_CASE) to "С витамин",
+                Regex("\\bVitamin\\s+D\\b", RegexOption.IGNORE_CASE) to "Д витамин",
+                Regex("\\bVitamin\\s+E\\b", RegexOption.IGNORE_CASE) to "Е витамин",
+                Regex("\\bVitamin\\s+K\\b", RegexOption.IGNORE_CASE) to "К витамин",
+                Regex("\\bVitamin\\s+A\\b", RegexOption.IGNORE_CASE) to "А витамин",
+                Regex("\\bVitamin\\s+B(\\d+)\\b", RegexOption.IGNORE_CASE) to "В$1 витамин",
+                Regex("\\bDietary\\s+Fiber\\b", RegexOption.IGNORE_CASE) to "Хүнсний эслэг",
+                Regex("\\bFiber\\b", RegexOption.IGNORE_CASE) to "Эслэг",
+                Regex("\\bPotassium\\b", RegexOption.IGNORE_CASE) to "Кали",
+                Regex("\\bCalcium\\b", RegexOption.IGNORE_CASE) to "Кальци",
+                Regex("\\bMagnesium\\b", RegexOption.IGNORE_CASE) to "Магни",
+                Regex("\\bFolate\\b", RegexOption.IGNORE_CASE) to "Фолат",
+                Regex("\\bIron\\b", RegexOption.IGNORE_CASE) to "Төмөр",
+                Regex("\\b%\\s*DV\\b", RegexOption.IGNORE_CASE) to "% ӨХХ",
+                Regex("\\bDV\\b") to "ӨХХ",
+                Regex("\\bkcal\\b", RegexOption.IGNORE_CASE) to "ккал",
+                Regex("(\\d+)\\s*mcg\\b", RegexOption.IGNORE_CASE) to "$1 мкг",
+                Regex("(\\d+)\\s*µg\\b", RegexOption.IGNORE_CASE) to "$1 мкг",
+                Regex("(\\d+)\\s*mg\\b", RegexOption.IGNORE_CASE) to "$1 мг",
+                Regex("(\\d+)\\s*g\\b", RegexOption.IGNORE_CASE) to "$1г",
+                Regex("\\bmin\\b", RegexOption.IGNORE_CASE) to "мин"
+            )
+            for ((regex, target) in replacements) {
+                cleaned = regex.replace(cleaned, target)
+            }
+            return cleaned.replace(Regex("\\s{2,}"), " ").trim()
         }
     }
 }
@@ -921,12 +1254,13 @@ private fun JSONObject.safeString(key: String, fallback: String): String {
     return if (raw.isEmpty() || raw.equals("null", ignoreCase = true)) fallback else raw
 }
 
-private fun JSONArray?.toStringList(): List<String> {
+private fun JSONArray?.toStringList(isMn: Boolean = false): List<String> {
     if (this == null) return emptyList()
     return (0 until length()).mapNotNull { idx ->
         if (isNull(idx)) return@mapNotNull null
         val raw = optString(idx, "").trim()
         raw.takeIf { it.isNotEmpty() && !it.equals("null", ignoreCase = true) }
+            ?.let { ProduceVisionAiService.sanitizeLocalizedText(it, isMn) }
     }
 }
 
@@ -935,9 +1269,18 @@ private fun JSONArray?.toNutritionList(isMn: Boolean): List<NutritionHighlight> 
     return (0 until length()).mapNotNull { idx ->
         val obj = optJSONObject(idx) ?: return@mapNotNull null
         NutritionHighlight(
-            name = obj.safeString("name", if (isMn) "Гол шим тэжээл" else "Key Nutrient"),
-            amount = obj.safeString("amount", if (isMn) "Баялаг эх үүсвэр" else "Rich source"),
-            benefit = obj.safeString("benefit", if (isMn) "Өдрийн эрч хүчийг дэмжинэ" else "Supports daily vitality")
+            name = ProduceVisionAiService.sanitizeLocalizedText(
+                obj.safeString("name", if (isMn) "Гол шим тэжээл" else "Key Nutrient"),
+                isMn
+            ),
+            amount = ProduceVisionAiService.sanitizeLocalizedText(
+                obj.safeString("amount", if (isMn) "Баялаг эх үүсвэр" else "Rich source"),
+                isMn
+            ),
+            benefit = ProduceVisionAiService.sanitizeLocalizedText(
+                obj.safeString("benefit", if (isMn) "Өдрийн эрч хүчийг дэмжинэ" else "Supports daily vitality"),
+                isMn
+            )
         )
     }
 }
@@ -947,9 +1290,18 @@ private fun JSONArray?.toHealthBenefitList(isMn: Boolean): List<HealthBenefit> {
     return (0 until length()).mapNotNull { idx ->
         val obj = optJSONObject(idx) ?: return@mapNotNull null
         HealthBenefit(
-            category = obj.safeString("category", if (isMn) "Эрүүл мэнд" else "Wellness"),
-            title = obj.safeString("title", if (isMn) "Өдрийн дэмжлэг" else "Daily Support"),
-            detail = obj.safeString("detail", "")
+            category = ProduceVisionAiService.sanitizeLocalizedText(
+                obj.safeString("category", if (isMn) "Эрүүл мэнд" else "Wellness"),
+                isMn
+            ),
+            title = ProduceVisionAiService.sanitizeLocalizedText(
+                obj.safeString("title", if (isMn) "Өдрийн дэмжлэг" else "Daily Support"),
+                isMn
+            ),
+            detail = ProduceVisionAiService.sanitizeLocalizedText(
+                obj.safeString("detail", ""),
+                isMn
+            )
         )
     }
 }
@@ -959,11 +1311,27 @@ private fun JSONArray?.toCookingList(isMn: Boolean): List<CookingSuggestion> {
     return (0 until length()).mapNotNull { idx ->
         val obj = optJSONObject(idx) ?: return@mapNotNull null
         CookingSuggestion(
-            title = obj.safeString("title", if (isMn) "Энгийн бэлтгэл" else "Simple Preparation"),
-            method = obj.safeString("method", if (isMn) "Зөөлөн болгох" else "Gentle Prep"),
+            title = ProduceVisionAiService.sanitizeLocalizedText(
+                obj.safeString("title", if (isMn) "Энгийн бэлтгэл" else "Simple Preparation"),
+                isMn
+            ),
+            method = ProduceVisionAiService.sanitizeLocalizedText(
+                obj.safeString("method", if (isMn) "Зөөлөн болгох" else "Gentle Prep"),
+                isMn
+            ),
             prepMinutes = obj.optInt("prepMinutes", 10).coerceAtLeast(1),
-            nutrientTip = obj.safeString("nutrientTip", if (isMn) "Витамин алдагдлыг багасгана" else "Minimizes heat nutrient loss"),
-            pairing = obj.safeString("pairing", if (isMn) "Шинэ ногоо ба нимбэг" else "Fresh herbs & citrus")
+            nutrientTip = ProduceVisionAiService.sanitizeLocalizedText(
+                obj.safeString("nutrientTip", if (isMn) "Витамин алдагдлыг багасгана" else "Minimizes heat nutrient loss"),
+                isMn
+            ),
+            pairing = ProduceVisionAiService.sanitizeLocalizedText(
+                obj.safeString("pairing", if (isMn) "Шинэ ногоо ба нимбэг" else "Fresh herbs & citrus"),
+                isMn
+            ),
+            goalFocus = ProduceVisionAiService.sanitizeLocalizedText(
+                obj.safeString("goalFocus", ""),
+                isMn
+            )
         )
     }
 }

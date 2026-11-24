@@ -12,6 +12,7 @@ import androidx.camera.core.ImageProxy
 import androidx.core.graphics.get
 import androidx.core.graphics.scale
 import androidx.exifinterface.media.ExifInterface
+import com.example.model.AppLanguage
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -25,13 +26,17 @@ data class ScanStorageStats(
     val fileCount: Int = 0,
     val totalBytes: Long = 0L
 ) {
-    fun formattedSize(): String {
+    fun formattedSize(language: AppLanguage = AppLanguage.ENGLISH): String {
+        val isMn = language == AppLanguage.MONGOLIAN
+        val mbUnit = if (isMn) "МБ" else "MB"
+        val kbUnit = if (isMn) "КБ" else "KB"
+        val bUnit = if (isMn) "Б" else "B"
         val kb = totalBytes / 1024.0
         val mb = kb / 1024.0
         return when {
-            mb >= 1.0 -> String.format(Locale.US, "%.1f MB", mb)
-            kb >= 1.0 -> "${kb.roundToInt()} KB"
-            else -> "$totalBytes B"
+            mb >= 1.0 -> String.format(Locale.US, "%.1f $mbUnit", mb)
+            kb >= 1.0 -> "${kb.roundToInt()} $kbUnit"
+            else -> "$totalBytes $bUnit"
         }
     }
 }

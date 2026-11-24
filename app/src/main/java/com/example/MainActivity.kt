@@ -19,12 +19,12 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.CameraAlt
-import androidx.compose.material.icons.outlined.Kitchen
-import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.rounded.CameraAlt
-import androidx.compose.material.icons.rounded.Kitchen
-import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.outlined.CameraEnhance
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.ShoppingBasket
+import androidx.compose.material.icons.rounded.CameraEnhance
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.ShoppingBasket
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -39,6 +39,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -75,18 +76,18 @@ private data class RipeWiseDestination(
 private val DESTINATIONS = listOf(
     RipeWiseDestination(
         route = ROUTE_SCANNER,
-        selectedIcon = Icons.Rounded.CameraAlt,
-        unselectedIcon = Icons.Outlined.CameraAlt
+        selectedIcon = Icons.Rounded.CameraEnhance,
+        unselectedIcon = Icons.Outlined.CameraEnhance
     ),
     RipeWiseDestination(
         route = ROUTE_PANTRY,
-        selectedIcon = Icons.Rounded.Kitchen,
-        unselectedIcon = Icons.Outlined.Kitchen
+        selectedIcon = Icons.Rounded.ShoppingBasket,
+        unselectedIcon = Icons.Outlined.ShoppingBasket
     ),
     RipeWiseDestination(
         route = ROUTE_PROFILE,
-        selectedIcon = Icons.Rounded.Person,
-        unselectedIcon = Icons.Outlined.Person
+        selectedIcon = Icons.Rounded.Favorite,
+        unselectedIcon = Icons.Outlined.FavoriteBorder
     )
 )
 
@@ -238,7 +239,14 @@ fun RipeWiseAppRoot(
                                         contentDescription = label
                                     )
                                 },
-                                label = { Text(label) },
+                                label = {
+                                    Text(
+                                        text = label,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                },
                                 modifier = Modifier.testTag("nav_${dest.route}")
                             )
                         }
@@ -276,7 +284,14 @@ fun RipeWiseAppRoot(
                                         contentDescription = label
                                     )
                                 },
-                                label = { Text(label) },
+                                label = {
+                                    Text(
+                                        text = label,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                },
                                 modifier = Modifier.testTag("rail_${dest.route}")
                             )
                         }
@@ -302,6 +317,7 @@ fun RipeWiseAppRoot(
                                     onSelectBatchIndex = { idx -> viewModel.selectBatchIndex(idx) },
                                     onSelectLanguage = { lang -> viewModel.setLanguage(lang) },
                                     onRefreshForProfile = { viewModel.reanalyzeActiveScan() },
+                                    onUpdateSectionOrder = { order -> viewModel.setReportSectionOrder(order) },
                                     onDismissTranslationWarning = { viewModel.dismissTranslationWarning() },
                                     onBackToScanner = { viewModel.resetToScanner() },
                                     onOpenChat = { viewModel.setChatSheetOpen(true) },
@@ -353,6 +369,9 @@ fun RipeWiseAppRoot(
                             scans = recentScans,
                             storageStats = storageStats,
                             language = preferences.language,
+                            expiryRemindersEnabled = preferences.expiryRemindersEnabled,
+                            onSetExpiryReminders = { viewModel.setExpiryRemindersEnabled(it) },
+                            onTriggerExpiryCheck = { viewModel.triggerExpiryCheckNow() },
                             onSelectLanguage = { lang -> viewModel.setLanguage(lang) },
                             onSelectScan = { item ->
                                 viewModel.openScanReport(item)
@@ -386,7 +405,8 @@ fun RipeWiseAppRoot(
                             onToggleCookingTool = { viewModel.toggleCookingTool(it) },
                             onSetLightingCalibration = { viewModel.setLightingCalibration(it) },
                             onSetSpatialMode = { viewModel.setSpatialMode(it) },
-                            onSetSpatialScaleHint = { viewModel.setSpatialScaleHint(it) }
+                            onSetSpatialScaleHint = { viewModel.setSpatialScaleHint(it) },
+                            onSetExpiryReminders = { viewModel.setExpiryRemindersEnabled(it) }
                         )
                     }
                 }

@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.model.AppLanguage
+import com.example.model.ReportSectionType
 import com.example.model.SpatialScaleHint
 import com.example.model.UserPreferences
 import kotlinx.coroutines.flow.Flow
@@ -27,6 +28,8 @@ class PreferencesRepository(private val context: Context) {
         val LIGHTING_CALIBRATION = booleanPreferencesKey("lighting_calibration")
         val SPATIAL_MODE = booleanPreferencesKey("spatial_mode")
         val SPATIAL_SCALE_HINT = stringPreferencesKey("spatial_scale_hint")
+        val REPORT_SECTION_ORDER = stringPreferencesKey("report_section_order")
+        val EXPIRY_REMINDERS_ENABLED = booleanPreferencesKey("expiry_reminders_enabled")
     }
 
     val userPreferences: Flow<UserPreferences> = context.dataStore.data.map { prefs ->
@@ -35,6 +38,7 @@ class PreferencesRepository(private val context: Context) {
         val language = AppLanguage.entries.firstOrNull { it.code == langCode } ?: defaults.language
         val hintName = prefs[Keys.SPATIAL_SCALE_HINT] ?: defaults.spatialScaleHint.name
         val scaleHint = SpatialScaleHint.entries.firstOrNull { it.name == hintName } ?: defaults.spatialScaleHint
+        val sectionOrder = ReportSectionType.fromStorageString(prefs[Keys.REPORT_SECTION_ORDER])
 
         UserPreferences(
             language = language,
@@ -44,7 +48,9 @@ class PreferencesRepository(private val context: Context) {
             cookingTools = prefs[Keys.COOKING_TOOLS] ?: defaults.cookingTools,
             lightingCalibrationEnabled = prefs[Keys.LIGHTING_CALIBRATION] ?: defaults.lightingCalibrationEnabled,
             spatialModeEnabled = prefs[Keys.SPATIAL_MODE] ?: defaults.spatialModeEnabled,
-            spatialScaleHint = scaleHint
+            spatialScaleHint = scaleHint,
+            reportSectionOrder = sectionOrder,
+            expiryRemindersEnabled = prefs[Keys.EXPIRY_REMINDERS_ENABLED] ?: defaults.expiryRemindersEnabled
         )
     }
 
@@ -97,6 +103,18 @@ class PreferencesRepository(private val context: Context) {
     suspend fun setSpatialScaleHint(hint: SpatialScaleHint) {
         context.dataStore.edit { prefs ->
             prefs[Keys.SPATIAL_SCALE_HINT] = hint.name
+        }
+    }
+
+    suspend fun setReportSectionOrder(order: List<ReportSectionType>) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.REPORT_SECTION_ORDER] = ReportSectionType.toStorageString(order)
+        }
+    }
+
+    suspend fun setExpiryRemindersEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.EXPIRY_REMINDERS_ENABLED] = enabled
         }
     }
 }

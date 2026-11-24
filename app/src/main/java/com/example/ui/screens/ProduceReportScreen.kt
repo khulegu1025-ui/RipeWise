@@ -30,42 +30,56 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Eco
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Kitchen
 import androidx.compose.material.icons.rounded.LocalDining
+import androidx.compose.material.icons.rounded.LocalFireDepartment
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.RestaurantMenu
 import androidx.compose.material.icons.rounded.Scale
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Spa
 import androidx.compose.material.icons.rounded.Straighten
+import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.ViewInAr
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material.icons.rounded.WbSunny
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -94,6 +108,7 @@ import com.example.model.CookingSuggestion
 import com.example.model.HealthBenefit
 import com.example.model.NutritionHighlight
 import com.example.model.ProduceAnalysisResult
+import com.example.model.ReportSectionType
 import com.example.model.ResultFilterTab
 import com.example.model.UserPreferences
 import com.example.ui.components.ProduceArtworkImage
@@ -101,9 +116,12 @@ import com.example.ui.components.ProduceChatOverlay
 import com.example.ui.components.RipenessArcGauge
 import com.example.ui.components.RipenessBadge
 import com.example.ui.i18n.UiStrings
+import com.example.ui.i18n.buildRecipeDetailsAiPrompt
 import com.example.ui.i18n.localizePreferenceOption
 import com.example.ui.i18n.stringsFor
 import com.example.ui.viewmodel.ChatUiState
+import com.example.util.ExpiryUrgency
+import com.example.util.FreshnessTracker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -119,6 +137,7 @@ fun ProduceReportScreen(
     onSelectBatchIndex: (Int) -> Unit,
     onSelectLanguage: (AppLanguage) -> Unit,
     onRefreshForProfile: () -> Unit = {},
+    onUpdateSectionOrder: (List<ReportSectionType>) -> Unit = {},
     onDismissTranslationWarning: () -> Unit,
     onBackToScanner: () -> Unit,
     onOpenChat: () -> Unit,
@@ -135,8 +154,9 @@ fun ProduceReportScreen(
     var selectedFilter by rememberSaveable(safeResults.firstOrNull()?.id) {
         mutableStateOf(ResultFilterTab.ALL)
     }
+    var showOrderSheet by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = !chatState.isSheetOpen) {
+    BackHandler(enabled = !chatState.isSheetOpen && !showOrderSheet) {
         onBackToScanner()
     }
 
@@ -169,6 +189,7 @@ fun ProduceReportScreen(
                                 translationWarning = translationWarning,
                                 selectedFilter = selectedFilter,
                                 onSelectFilter = { selectedFilter = it },
+                                onOpenOrderEditor = { showOrderSheet = true },
                                 onSelectBatchIndex = onSelectBatchIndex,
                                 onSelectLanguage = onSelectLanguage,
                                 onRefreshForProfile = onRefreshForProfile,
@@ -208,75 +229,102 @@ fun ProduceReportScreen(
                     }
                 }
             } else {
-                Box(
+                Column(
                     modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.TopCenter
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    key(safeResults.firstOrNull()?.id, safeResults.size) {
-                        ReportContentList(
-                            results = safeResults,
-                            selectedIndex = currentIndex,
-                            totalAttempted = totalAttempted,
-                            isTranslating = isTranslating,
-                            translationWarning = translationWarning,
-                            selectedFilter = selectedFilter,
-                            onSelectFilter = { selectedFilter = it },
-                            onSelectBatchIndex = onSelectBatchIndex,
-                            onSelectLanguage = onSelectLanguage,
-                            onRefreshForProfile = onRefreshForProfile,
-                            onDismissTranslationWarning = onDismissTranslationWarning,
-                            preferences = preferences,
-                            strings = strings,
-                            onBackToScanner = onBackToScanner,
-                            onOpenChat = onOpenChat,
-                            onQuickAsk = { question ->
-                                onOpenChat()
-                                onSendChatMessage(question)
-                            },
-                            showBottomCtaSpacer = true,
-                            showInlineAiCard = true,
-                            modifier = Modifier.widthIn(max = 640.dp)
-                        )
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        contentAlignment = Alignment.TopCenter
+                    ) {
+                        key(safeResults.firstOrNull()?.id, safeResults.size) {
+                            ReportContentList(
+                                results = safeResults,
+                                selectedIndex = currentIndex,
+                                totalAttempted = totalAttempted,
+                                isTranslating = isTranslating,
+                                translationWarning = translationWarning,
+                                selectedFilter = selectedFilter,
+                                onSelectFilter = { selectedFilter = it },
+                                onOpenOrderEditor = { showOrderSheet = true },
+                                onSelectBatchIndex = onSelectBatchIndex,
+                                onSelectLanguage = onSelectLanguage,
+                                onRefreshForProfile = onRefreshForProfile,
+                                onDismissTranslationWarning = onDismissTranslationWarning,
+                                preferences = preferences,
+                                strings = strings,
+                                onBackToScanner = onBackToScanner,
+                                onOpenChat = onOpenChat,
+                                onQuickAsk = { question ->
+                                    onOpenChat()
+                                    onSendChatMessage(question)
+                                },
+                                showBottomCtaSpacer = false,
+                                showInlineAiCard = true,
+                                modifier = Modifier.widthIn(max = 640.dp)
+                            )
+                        }
                     }
 
                     AnimatedVisibility(
                         visible = !chatState.isSheetOpen,
-                        enter = fadeIn() + slideInVertically { it / 2 },
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(horizontal = 20.dp, vertical = 14.dp)
+                        enter = fadeIn() + slideInVertically { it / 2 }
                     ) {
-                        Button(
-                            onClick = onOpenChat,
-                            shape = CircleShape,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary
-                            ),
-                            elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp),
-                            contentPadding = PaddingValues(horizontal = 22.dp, vertical = 14.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .widthIn(max = 420.dp)
-                                .minimumInteractiveComponentSize()
-                                .testTag("open_ai_chat_button")
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface,
+                            tonalElevation = 2.dp,
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.AutoAwesome,
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = "${strings.askAiButton} · ${activeAnalysis.produceName}",
-                                style = MaterialTheme.typography.labelLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 20.dp, vertical = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Button(
+                                    onClick = onOpenChat,
+                                    shape = CircleShape,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary
+                                    ),
+                                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp),
+                                    contentPadding = PaddingValues(horizontal = 22.dp, vertical = 14.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .widthIn(max = 420.dp)
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("open_ai_chat_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.AutoAwesome,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = "${strings.askAiButton} · ${activeAnalysis.produceName}",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
+        }
+
+        if (showOrderSheet) {
+            ReportSectionOrderSheet(
+                currentOrder = preferences.reportSectionOrder,
+                strings = strings,
+                onUpdateOrder = onUpdateSectionOrder,
+                onDismiss = { showOrderSheet = false }
+            )
         }
 
         ProduceChatOverlay(
@@ -301,6 +349,7 @@ private fun ReportContentList(
     translationWarning: String?,
     selectedFilter: ResultFilterTab,
     onSelectFilter: (ResultFilterTab) -> Unit,
+    onOpenOrderEditor: () -> Unit,
     onSelectBatchIndex: (Int) -> Unit,
     onSelectLanguage: (AppLanguage) -> Unit,
     onRefreshForProfile: () -> Unit,
@@ -345,215 +394,102 @@ private fun ReportContentList(
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        // Pinned Top Report Controls: Always-visible Back button + Batch / Category + Copy + Share + Refresh + EN/МОН
-        FlowRow(
+        // Pinned Top Report Controls: Row 1 (Back + Category/Batch + EN/МОН), Row 2 (Copy + Share + Refresh + Reorder)
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+                .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surface,
-                    modifier = Modifier
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
                 ) {
-                    IconButton(
-                        onClick = onBackToScanner,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("report_back_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = strings.backContentDesc,
-                            tint = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-
-                if (results.size > 1) {
                     Surface(
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.surface,
                         modifier = Modifier
                             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                        ) {
-                            IconButton(
-                                onClick = {
-                                    val prev = (pagerState.targetPage - 1).coerceAtLeast(0)
-                                    coroutineScope.launch { pagerState.animateScrollToPage(prev) }
-                                },
-                                enabled = selectedIndex > 0,
-                                modifier = Modifier
-                                    .minimumInteractiveComponentSize()
-                                    .testTag("batch_prev_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
-                                    contentDescription = strings.prevItemContentDesc
-                                )
-                            }
-                            Text(
-                                text = strings.batchItemCounter(selectedIndex, results.size),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                softWrap = false
-                            )
-                            IconButton(
-                                onClick = {
-                                    val next = (pagerState.targetPage + 1).coerceAtMost(results.lastIndex)
-                                    coroutineScope.launch { pagerState.animateScrollToPage(next) }
-                                },
-                                enabled = selectedIndex < results.lastIndex,
-                                modifier = Modifier
-                                    .minimumInteractiveComponentSize()
-                                    .testTag("batch_next_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                                    contentDescription = strings.nextItemContentDesc
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    Text(
-                        text = analysis.category,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Surface(
-                    shape = CircleShape,
-                    color = if (copiedNoticeVisible) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surface
-                    },
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .clip(CircleShape)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                        .clickable {
-                            val formatted = ProduceVisionAiService.formatAnalysisForCopy(
-                                analysis = analysis,
-                                language = preferences.language
-                            )
-                            clipboardManager.setText(AnnotatedString(formatted))
-                            copiedNoticeVisible = true
-                        }
-                        .testTag("copy_report_button")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (copiedNoticeVisible) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
-                            contentDescription = strings.copyContentDesc,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Text(
-                            text = strings.copyInfoLabel,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-                }
-
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surface,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .clip(CircleShape)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                        .clickable {
-                            val formatted = ProduceVisionAiService.formatAnalysisForCopy(
-                                analysis = analysis,
-                                language = preferences.language
-                            )
-                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_SUBJECT, analysis.produceName)
-                                putExtra(Intent.EXTRA_TEXT, formatted)
-                            }
-                            val chooser = Intent.createChooser(sendIntent, strings.shareChooserTitle).apply {
-                                if (context !is android.app.Activity) {
-                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                }
-                            }
-                            runCatching { context.startActivity(chooser) }
-                        }
-                        .testTag("share_report_button")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Share,
-                            contentDescription = strings.shareContentDesc,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Text(
-                            text = strings.shareInfoLabel,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-                }
-
-                if (!analysis.localImagePath.isNullOrBlank() || !analysis.sampleKey.isNullOrBlank()) {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surface,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .clip(CircleShape)
-                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                            .clickable(enabled = !isTranslating) {
-                                onRefreshForProfile()
-                            }
-                            .testTag("refresh_report_button")
-                    ) {
-                        Box(
-                            modifier = Modifier.padding(10.dp),
-                            contentAlignment = Alignment.Center
+                        IconButton(
+                            onClick = onBackToScanner,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("report_back_button")
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.Refresh,
-                                contentDescription = strings.refreshForProfileContentDesc,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
+                                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = strings.backContentDesc,
+                                tint = MaterialTheme.colorScheme.onSurface
                             )
                         }
+                    }
+
+                    if (results.size > 1) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surface,
+                            modifier = Modifier
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        val prev = (pagerState.targetPage - 1).coerceAtLeast(0)
+                                        coroutineScope.launch { pagerState.animateScrollToPage(prev) }
+                                    },
+                                    enabled = selectedIndex > 0,
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("batch_prev_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
+                                        contentDescription = strings.prevItemContentDesc
+                                    )
+                                }
+                                Text(
+                                    text = strings.batchItemCounter(selectedIndex, results.size),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                                IconButton(
+                                    onClick = {
+                                        val next = (pagerState.targetPage + 1).coerceAtMost(results.lastIndex)
+                                        coroutineScope.launch { pagerState.animateScrollToPage(next) }
+                                    },
+                                    enabled = selectedIndex < results.lastIndex,
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("batch_next_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                        contentDescription = strings.nextItemContentDesc
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = analysis.category,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
 
@@ -562,12 +498,174 @@ private fun ReportContentList(
                     onSelect = onSelectLanguage
                 )
             }
+
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                item {
+                    Surface(
+                        shape = CircleShape,
+                        color = if (copiedNoticeVisible) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surface
+                        },
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .clip(CircleShape)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                            .clickable {
+                                val formatted = ProduceVisionAiService.formatAnalysisForCopy(
+                                    analysis = analysis,
+                                    language = preferences.language
+                                )
+                                clipboardManager.setText(AnnotatedString(formatted))
+                                copiedNoticeVisible = true
+                            }
+                            .testTag("copy_report_button")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (copiedNoticeVisible) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                                contentDescription = strings.copyContentDesc,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = strings.copyInfoLabel,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .clip(CircleShape)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                            .clickable {
+                                val formatted = ProduceVisionAiService.formatAnalysisForCopy(
+                                    analysis = analysis,
+                                    language = preferences.language
+                                )
+                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_SUBJECT, analysis.produceName)
+                                    putExtra(Intent.EXTRA_TEXT, formatted)
+                                }
+                                val chooser = Intent.createChooser(sendIntent, strings.shareChooserTitle).apply {
+                                    if (context !is android.app.Activity) {
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                }
+                                runCatching { context.startActivity(chooser) }
+                            }
+                            .testTag("share_report_button")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Share,
+                                contentDescription = strings.shareContentDesc,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = strings.shareInfoLabel,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+                }
+
+                if (!analysis.localImagePath.isNullOrBlank() || !analysis.sampleKey.isNullOrBlank()) {
+                    item {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surface,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .clip(CircleShape)
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                                .clickable(enabled = !isTranslating) {
+                                    onRefreshForProfile()
+                                }
+                                .testTag("refresh_report_button")
+                        ) {
+                            Box(
+                                modifier = Modifier.padding(9.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Refresh,
+                                    contentDescription = strings.refreshForProfileContentDesc,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .clip(CircleShape)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                            .clickable { onOpenOrderEditor() }
+                            .testTag("customize_report_order_button")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.SwapVert,
+                                contentDescription = strings.customizeOrderLabel,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = strings.customizeOrderLabel,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         LazyColumn(
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth(),
+                .fillMaxWidth()
+                .testTag("report_content_list"),
             contentPadding = PaddingValues(
                 start = 20.dp,
                 end = 20.dp,
@@ -759,13 +857,29 @@ private fun ReportContentList(
         item {
             LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.testTag("result_filter_bar")
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("result_filter_bar")
             ) {
                 items(ResultFilterTab.entries) { filter ->
                     val isSelected = selectedFilter == filter
+                    val leadingIcon = when (filter) {
+                        ResultFilterTab.ALL -> Icons.Rounded.AutoAwesome
+                        ResultFilterTab.RIPENESS_SIZE -> Icons.Rounded.Eco
+                        ResultFilterTab.VITAMINS -> Icons.Rounded.WbSunny
+                        ResultFilterTab.NUTRIENTS -> Icons.Rounded.Spa
+                        ResultFilterTab.USAGE -> Icons.Rounded.RestaurantMenu
+                    }
                     FilterChip(
                         selected = isSelected,
                         onClick = { onSelectFilter(filter) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = leadingIcon,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
                         label = { Text(strings.filterLabel(filter)) },
                         shape = CircleShape,
                         colors = FilterChipDefaults.filterChipColors(
@@ -778,126 +892,155 @@ private fun ReportContentList(
             }
         }
 
-        if (selectedFilter == ResultFilterTab.ALL || selectedFilter == ResultFilterTab.RIPENESS_SIZE) {
-            item {
-                RipenessDetailsCard(
-                    analysis = analysis,
-                    language = preferences.language,
-                    strings = strings
-                )
-            }
-            item {
-                SpatialSizeWeightCard(
-                    analysis = analysis,
-                    strings = strings
-                )
-            }
-        }
+        val orderedSections = (
+            preferences.reportSectionOrder.distinct() +
+                ReportSectionType.entries.filterNot { it in preferences.reportSectionOrder }
+            )
 
-        if (selectedFilter == ResultFilterTab.ALL ||
-            selectedFilter == ResultFilterTab.RIPENESS_SIZE ||
-            selectedFilter == ResultFilterTab.USAGE
-        ) {
-            item {
-                StorageCard(
-                    analysis = analysis,
-                    strings = strings
-                )
-            }
-        }
-
-        if (selectedFilter == ResultFilterTab.ALL ||
-            selectedFilter == ResultFilterTab.VITAMINS ||
-            selectedFilter == ResultFilterTab.NUTRIENTS
-        ) {
-            item {
-                NutrientPreservationBanner(
-                    rule = analysis.nutrientPreservationRule,
-                    title = strings.nutrientRuleTitle
-                )
-            }
-        }
-
-        if ((selectedFilter == ResultFilterTab.ALL || selectedFilter == ResultFilterTab.VITAMINS) &&
-            analysis.vitamins.isNotEmpty()
-        ) {
-            item {
-                NutritionGroupSection(
-                    title = strings.vitaminsTitle,
-                    itemsList = analysis.vitamins,
-                    expandedLayout = (selectedFilter == ResultFilterTab.VITAMINS)
-                )
-            }
-        }
-
-        if ((selectedFilter == ResultFilterTab.ALL || selectedFilter == ResultFilterTab.NUTRIENTS) &&
-            analysis.nutrients.isNotEmpty()
-        ) {
-            item {
-                NutritionGroupSection(
-                    title = strings.nutrientsTitle,
-                    itemsList = analysis.nutrients,
-                    expandedLayout = (selectedFilter == ResultFilterTab.NUTRIENTS)
-                )
-            }
-            if (selectedFilter == ResultFilterTab.NUTRIENTS) {
-                item {
-                    SpatialSizeWeightCard(
-                        analysis = analysis,
-                        strings = strings
-                    )
-                }
-            }
-        }
-
-        if ((selectedFilter == ResultFilterTab.ALL || selectedFilter == ResultFilterTab.VITAMINS) &&
-            analysis.healthBenefits.isNotEmpty()
-        ) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = strings.healthBenefitsTitle,
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    analysis.healthBenefits.forEach { benefit ->
-                        val matchesGoal = matchesPreferenceFocus(
-                            benefitCategory = benefit.category,
-                            preferences = preferences
-                        )
-                        HealthBenefitCard(
-                            benefit = benefit,
-                            isFocusMatch = matchesGoal,
-                            focusBadgeLabel = strings.yourFocusBadge
-                        )
+        orderedSections.forEach { section ->
+            when (section) {
+                ReportSectionType.RIPENESS -> {
+                    if (selectedFilter == ResultFilterTab.ALL || selectedFilter == ResultFilterTab.RIPENESS_SIZE) {
+                        item(key = "section_ripeness") {
+                            RipenessDetailsCard(
+                                analysis = analysis,
+                                language = preferences.language,
+                                strings = strings
+                            )
+                        }
                     }
                 }
-            }
-        }
 
-        if ((selectedFilter == ResultFilterTab.ALL || selectedFilter == ResultFilterTab.USAGE) &&
-            analysis.cookingSuggestions.isNotEmpty()
-        ) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = strings.usageRecipesTitle,
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    analysis.cookingSuggestions.forEach { suggestion ->
-                        CookingSuggestionCard(
-                            suggestion = suggestion,
-                            pairingPrefix = strings.perfectPairing,
-                            language = preferences.language
-                        )
+                ReportSectionType.SIZE_CALORIES -> {
+                    if (selectedFilter == ResultFilterTab.ALL ||
+                        selectedFilter == ResultFilterTab.RIPENESS_SIZE ||
+                        selectedFilter == ResultFilterTab.NUTRIENTS
+                    ) {
+                        item(key = "section_size_calories") {
+                            SpatialSizeWeightCard(
+                                analysis = analysis,
+                                strings = strings
+                            )
+                        }
+                    }
+                }
+
+                ReportSectionType.STORAGE -> {
+                    if (selectedFilter == ResultFilterTab.ALL ||
+                        selectedFilter == ResultFilterTab.RIPENESS_SIZE ||
+                        selectedFilter == ResultFilterTab.USAGE
+                    ) {
+                        item(key = "section_storage") {
+                            StorageCard(
+                                analysis = analysis,
+                                strings = strings
+                            )
+                        }
+                    }
+                }
+
+                ReportSectionType.VITAMINS_NUTRIENTS -> {
+                    val showBanner = selectedFilter == ResultFilterTab.ALL ||
+                        selectedFilter == ResultFilterTab.VITAMINS ||
+                        selectedFilter == ResultFilterTab.NUTRIENTS
+                    val showVitamins = (selectedFilter == ResultFilterTab.ALL || selectedFilter == ResultFilterTab.VITAMINS) &&
+                        analysis.vitamins.isNotEmpty()
+                    val showNutrients = (selectedFilter == ResultFilterTab.ALL || selectedFilter == ResultFilterTab.NUTRIENTS) &&
+                        analysis.nutrients.isNotEmpty()
+                    if (showBanner || showVitamins || showNutrients) {
+                        item(key = "section_vitamins_nutrients") {
+                            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                if (showBanner) {
+                                    NutrientPreservationBanner(
+                                        rule = analysis.nutrientPreservationRule,
+                                        title = strings.nutrientRuleTitle
+                                    )
+                                }
+                                if (showVitamins) {
+                                    NutritionGroupSection(
+                                        title = strings.vitaminsTitle,
+                                        itemsList = analysis.vitamins,
+                                        expandedLayout = (selectedFilter == ResultFilterTab.VITAMINS)
+                                    )
+                                }
+                                if (showNutrients) {
+                                    NutritionGroupSection(
+                                        title = strings.nutrientsTitle,
+                                        itemsList = analysis.nutrients,
+                                        expandedLayout = (selectedFilter == ResultFilterTab.NUTRIENTS)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ReportSectionType.HEALTH_BENEFITS -> {
+                    if ((selectedFilter == ResultFilterTab.ALL || selectedFilter == ResultFilterTab.VITAMINS) &&
+                        analysis.healthBenefits.isNotEmpty()
+                    ) {
+                        item(key = "section_health_benefits") {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(
+                                    text = strings.healthBenefitsTitle,
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                analysis.healthBenefits.forEach { benefit ->
+                                    val matchesGoal = matchesPreferenceFocus(
+                                        benefitCategory = benefit.category,
+                                        preferences = preferences
+                                    )
+                                    HealthBenefitCard(
+                                        benefit = benefit,
+                                        isFocusMatch = matchesGoal,
+                                        focusBadgeLabel = strings.yourFocusBadge
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ReportSectionType.RECIPES -> {
+                    if ((selectedFilter == ResultFilterTab.ALL || selectedFilter == ResultFilterTab.USAGE) &&
+                        analysis.cookingSuggestions.isNotEmpty()
+                    ) {
+                        item(key = "section_recipes") {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(
+                                    text = strings.usageRecipesTitle,
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                analysis.cookingSuggestions.forEachIndexed { idx, suggestion ->
+                                    CookingSuggestionCard(
+                                        suggestion = suggestion,
+                                        index = idx,
+                                        pairingPrefix = strings.perfectPairing,
+                                        aiStepsButtonLabel = strings.recipeStepsAiButton,
+                                        language = preferences.language,
+                                        onAskAiRecipeSteps = {
+                                            onQuickAsk(
+                                                buildRecipeDetailsAiPrompt(
+                                                    produceName = analysis.produceName,
+                                                    weightGrams = analysis.estimatedWeightGrams,
+                                                    suggestion = suggestion,
+                                                    language = preferences.language
+                                                )
+                                            )
+                                        }
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
 
         if (showInlineAiCard) {
-            item {
+            item(key = "inline_ai_preview") {
                 InlineAiPreviewCard(
                     analysis = analysis,
                     preferences = preferences,
@@ -961,8 +1104,14 @@ private fun HeroProduceCard(
                     tint = Color(0xFFFAD78A),
                     modifier = Modifier.size(14.dp)
                 )
+                val badgeText = buildString {
+                    append("${analysis.confidencePercent}% ${strings.matchLabel} · ~${analysis.estimatedWeightGrams}${strings.weightUnit}")
+                    if (analysis.estimatedCaloriesKcal > 0) {
+                        append(" · ~${analysis.estimatedCaloriesKcal} ${strings.kcalUnit}")
+                    }
+                }
                 Text(
-                    text = "${analysis.confidencePercent}% ${strings.matchLabel} · ~${analysis.estimatedWeightGrams}${strings.weightUnit}",
+                    text = badgeText,
                     style = MaterialTheme.typography.labelSmall,
                     color = Color.White
                 )
@@ -974,8 +1123,16 @@ private fun HeroProduceCard(
                 .align(Alignment.BottomStart)
                 .padding(20.dp)
         ) {
+            val heroProjection = remember(
+                analysis.id,
+                analysis.scannedAtMillis,
+                analysis.ripenessStage,
+                analysis.ripenessScore,
+                analysis.daysRemainingMin,
+                analysis.daysRemainingMax
+            ) { FreshnessTracker.evaluate(analysis) }
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                RipenessBadge(stage = analysis.ripenessStage, language = language)
+                RipenessBadge(stage = heroProjection.projectedStage, language = language)
                 Text(
                     text = analysis.produceName,
                     style = MaterialTheme.typography.displaySmall,
@@ -1001,6 +1158,15 @@ private fun RipenessDetailsCard(
     language: AppLanguage,
     strings: UiStrings
 ) {
+    val projection = remember(
+        analysis.id,
+        analysis.scannedAtMillis,
+        analysis.ripenessStage,
+        analysis.ripenessScore,
+        analysis.daysRemainingMin,
+        analysis.daysRemainingMax
+    ) { FreshnessTracker.evaluate(analysis) }
+
     Surface(
         shape = RoundedCornerShape(24.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -1020,8 +1186,8 @@ private fun RipenessDetailsCard(
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 RipenessArcGauge(
-                    score = analysis.ripenessScore,
-                    stage = analysis.ripenessStage,
+                    score = projection.projectedScore,
+                    stage = projection.projectedStage,
                     language = language
                 )
                 Column(
@@ -1049,25 +1215,91 @@ private fun RipenessDetailsCard(
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    val daysText = if (language == AppLanguage.MONGOLIAN) {
+                    val daysText = if (projection.urgency == ExpiryUrgency.EXPIRED) {
+                        strings.expiryExpiredLabel
+                    } else if (language == AppLanguage.MONGOLIAN) {
                         when {
-                            analysis.daysRemainingMax == 0 -> "Өнөөдөр хэрэглэхэд хамгийн тохиромжтой"
-                            analysis.daysRemainingMin == analysis.daysRemainingMax -> "${analysis.daysRemainingMin} хоногт хэрэглэнэ"
-                            else -> "Хугацаа: ${analysis.daysRemainingMin}–${analysis.daysRemainingMax} хоног"
+                            projection.remainingDaysMax == 0 -> "Өнөөдөр хэрэглэхэд хамгийн тохиромжтой"
+                            projection.remainingDaysMin == projection.remainingDaysMax ->
+                                "${projection.remainingDaysMin} хоногт хэрэглэнэ"
+                            else -> "Хугацаа: ${projection.remainingDaysMin}–${projection.remainingDaysMax} хоног"
                         }
                     } else {
                         when {
-                            analysis.daysRemainingMax == 0 -> "Enjoy today for peak quality"
-                            analysis.daysRemainingMin == analysis.daysRemainingMax ->
-                                "Window: ${analysis.daysRemainingMin} day${if (analysis.daysRemainingMin == 1) "" else "s"}"
-                            else -> "Window: ${analysis.daysRemainingMin}–${analysis.daysRemainingMax} days"
+                            projection.remainingDaysMax == 0 -> "Enjoy today for peak quality"
+                            projection.remainingDaysMin == projection.remainingDaysMax ->
+                                "Window: ${projection.remainingDaysMin} day${if (projection.remainingDaysMin == 1) "" else "s"}"
+                            else -> "Window: ${projection.remainingDaysMin}–${projection.remainingDaysMax} days"
                         }
                     }
                     Text(
                         text = daysText,
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = if (projection.urgency == ExpiryUrgency.EXPIRED) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
                     )
+                    Text(
+                        text = strings.scannedAtLabel(
+                            FreshnessTracker.formatScanTimestamp(analysis.scannedAtMillis, language)
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("report_scanned_timestamp")
+                    )
+                }
+            }
+
+            if (projection.hasRipenessChanged) {
+                val deltaText = if (projection.scoreDelta < 0) {
+                    strings.ripenessDroppedLabel(
+                        projection.originalScore,
+                        projection.projectedScore
+                    )
+                } else {
+                    strings.ripenessImprovedLabel(
+                        projection.originalScore,
+                        projection.projectedScore
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (projection.scoreDelta < 0) {
+                        MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
+                    } else {
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("ripeness_degradation_notice")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.WarningAmber,
+                            contentDescription = null,
+                            tint = if (projection.scoreDelta < 0) {
+                                MaterialTheme.colorScheme.onErrorContainer
+                            } else {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            },
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = deltaText,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (projection.scoreDelta < 0) {
+                                MaterialTheme.colorScheme.onErrorContainer
+                            } else {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            }
+                        )
+                    }
                 }
             }
 
@@ -1212,6 +1444,61 @@ private fun SpatialSizeWeightCard(
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onSurface
                         )
+                    }
+                }
+            }
+
+            if (analysis.estimatedCaloriesKcal > 0) {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("calorie_estimate_tile")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.LocalFireDepartment,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column {
+                                Text(
+                                    text = strings.approxCalories,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                                )
+                                Text(
+                                    text = "~${analysis.estimatedCaloriesKcal} ${strings.kcalUnit}",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
+                        }
+                        if (analysis.caloriesPer100g > 0) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surface,
+                                shape = CircleShape
+                            ) {
+                                Text(
+                                    text = "${analysis.caloriesPer100g} ${strings.kcalUnit} ${strings.per100gLabel}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1518,8 +1805,11 @@ private fun HealthBenefitCard(
 @Composable
 private fun CookingSuggestionCard(
     suggestion: CookingSuggestion,
+    index: Int,
     pairingPrefix: String,
-    language: AppLanguage
+    aiStepsButtonLabel: String,
+    language: AppLanguage,
+    onAskAiRecipeSteps: () -> Unit
 ) {
     Surface(
         shape = RoundedCornerShape(22.dp),
@@ -1528,59 +1818,287 @@ private fun CookingSuggestionCard(
             .fillMaxWidth()
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(22.dp))
     ) {
-        SelectionContainer {
-            Column(
-                modifier = Modifier.padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            SelectionContainer {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.LocalDining,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(17.dp)
-                        )
-                        Text(
-                            text = suggestion.method,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.LocalDining,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(17.dp)
+                            )
+                            Text(
+                                text = suggestion.method,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = CircleShape
+                        ) {
+                            Text(
+                                text = if (language == AppLanguage.MONGOLIAN) {
+                                    "${suggestion.prepMinutes} мин"
+                                } else {
+                                    "${suggestion.prepMinutes} min"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
                     }
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = CircleShape
-                    ) {
-                        Text(
-                            text = if (language == AppLanguage.MONGOLIAN) "${suggestion.prepMinutes} мин" else "${suggestion.prepMinutes} min",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
+
+                    if (suggestion.goalFocus.isNotBlank()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            shape = CircleShape
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Favorite,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = suggestion.goalFocus,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                     }
+
+                    Text(
+                        text = suggestion.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = suggestion.nutrientTip,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "$pairingPrefix: ${suggestion.pairing}",
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
+            }
+
+            FilledTonalButton(
+                onClick = onAskAiRecipeSteps,
+                shape = CircleShape,
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .minimumInteractiveComponentSize()
+                    .testTag("recipe_ai_guide_$index")
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.AutoAwesome,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = suggestion.title,
-                    style = MaterialTheme.typography.titleMedium,
+                    text = aiStepsButtonLabel,
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReportSectionOrderSheet(
+    currentOrder: List<ReportSectionType>,
+    strings: UiStrings,
+    onUpdateOrder: (List<ReportSectionType>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val normalizedOrder = (
+        currentOrder.distinct() + ReportSectionType.entries.filterNot { it in currentOrder }
+        )
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 560.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 20.dp, end = 20.dp, bottom = 24.dp)
+                .testTag("report_order_sheet"),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = strings.customizeOrderTitle,
+                    style = MaterialTheme.typography.headlineSmall,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = suggestion.nutrientTip,
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = strings.customizeOrderSubtitle,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Text(
-                    text = "$pairingPrefix: ${suggestion.pairing}",
-                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                    color = MaterialTheme.colorScheme.primary
-                )
+            }
+
+            normalizedOrder.forEachIndexed { idx, section ->
+                val sectionIcon = when (section) {
+                    ReportSectionType.RIPENESS -> Icons.Rounded.Eco
+                    ReportSectionType.SIZE_CALORIES -> Icons.Rounded.ViewInAr
+                    ReportSectionType.STORAGE -> Icons.Rounded.Kitchen
+                    ReportSectionType.VITAMINS_NUTRIENTS -> Icons.Rounded.Spa
+                    ReportSectionType.HEALTH_BENEFITS -> Icons.Rounded.Favorite
+                    ReportSectionType.RECIPES -> Icons.Rounded.RestaurantMenu
+                }
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(18.dp))
+                        .testTag("order_row_${section.key}")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = CircleShape,
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = "${idx + 1}",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+                        Icon(
+                            imageVector = sectionIcon,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = strings.sectionLabel(section),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(
+                            onClick = {
+                                if (idx > 0) {
+                                    val mutable = normalizedOrder.toMutableList()
+                                    val moved = mutable.removeAt(idx)
+                                    mutable.add(idx - 1, moved)
+                                    onUpdateOrder(mutable)
+                                }
+                            },
+                            enabled = idx > 0,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("move_up_${section.key}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.ArrowUpward,
+                                contentDescription = strings.moveUpContentDesc
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                if (idx < normalizedOrder.lastIndex) {
+                                    val mutable = normalizedOrder.toMutableList()
+                                    val moved = mutable.removeAt(idx)
+                                    mutable.add(idx + 1, moved)
+                                    onUpdateOrder(mutable)
+                                }
+                            },
+                            enabled = idx < normalizedOrder.lastIndex,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("move_down_${section.key}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.ArrowDownward,
+                                contentDescription = strings.moveDownContentDesc
+                            )
+                        }
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(
+                    onClick = { onUpdateOrder(ReportSectionType.DEFAULT_ORDER) },
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("reset_report_order_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.RestartAlt,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(strings.resetOrderLabel)
+                }
+                Button(
+                    onClick = onDismiss,
+                    shape = CircleShape,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("close_report_order_button")
+                ) {
+                    Text(strings.doneLabel)
+                }
             }
         }
     }

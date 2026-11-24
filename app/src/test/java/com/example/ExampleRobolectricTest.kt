@@ -14,7 +14,9 @@ import com.example.data.ChatMessageEntity
 import com.example.data.RipeWiseDatabase
 import com.example.data.ScanHistoryEntity
 import com.example.model.AppLanguage
+import com.example.model.ReportSectionType
 import com.example.model.RipenessStage
+import com.example.model.UserPreferences
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -517,6 +519,10 @@ class ExampleRobolectricTest {
         composeRule.onNodeWithTag("copied_confirmation_banner").assertExists()
         composeRule.onNodeWithTag("share_report_button").assertExists()
         composeRule.onNodeWithTag("refresh_report_button").assertExists()
+        composeRule.onNodeWithTag("report_content_list")
+            .performScrollToNode(hasTestTag("result_filter_bar"))
+        composeRule.onNodeWithTag("result_filter_bar")
+            .performScrollToNode(hasTestTag("result_filter_vitamins"))
         composeRule.onNodeWithTag("result_filter_vitamins").performClick()
         composeRule.waitForIdle()
     }
@@ -651,6 +657,378 @@ class ExampleRobolectricTest {
         composeRule.onNodeWithTag("profile_lang_mn").assertExists().performClick()
         composeRule.waitForIdle()
         assertEquals(AppLanguage.MONGOLIAN, selectedLanguage)
+    }
+
+    @Test
+    fun `calories parse serialize and display in report screen`() {
+        val withExplicitCalories = ProduceVisionAiService.parseAnalysisJson(
+            """
+            {
+              "isProduce": true,
+              "produceName": "Hass Avocado",
+              "estimatedWeightGrams": 175,
+              "estimatedCaloriesKcal": 280,
+              "caloriesPer100g": 160,
+              "servingWeightSummary": "1 medium avocado"
+            }
+            """.trimIndent(),
+            id = "id-kcal-1"
+        )
+        assertEquals(280, withExplicitCalories.estimatedCaloriesKcal)
+        assertEquals(160, withExplicitCalories.caloriesPer100g)
+
+        val roundTrip = ProduceVisionAiService.parseAnalysisJson(
+            ProduceVisionAiService.serializeAnalysisToJson(withExplicitCalories)
+        )
+        assertEquals(280, roundTrip.estimatedCaloriesKcal)
+        assertEquals(160, roundTrip.caloriesPer100g)
+
+        val fromServingSummaryFallback = ProduceVisionAiService.parseAnalysisJson(
+            """
+            {
+              "isProduce": true,
+              "produceName": "Honeycrisp Apple",
+              "estimatedWeightGrams": 200,
+              "servingWeightSummary": "1 medium apple (~104 kcal)"
+            }
+            """.trimIndent()
+        )
+        assertEquals(104, fromServingSummaryFallback.estimatedCaloriesKcal)
+        assertEquals(52, fromServingSummaryFallback.caloriesPer100g)
+
+        val copiedEn = ProduceVisionAiService.formatAnalysisForCopy(withExplicitCalories, AppLanguage.ENGLISH)
+        assertTrue(copiedEn.contains("280 kcal"))
+        assertTrue(copiedEn.contains("160 kcal/100g"))
+
+        composeRule.setContent {
+            com.example.ui.theme.RipeWiseTheme {
+                com.example.ui.screens.ProduceReportScreen(
+                    results = listOf(withExplicitCalories),
+                    selectedIndex = 0,
+                    totalAttempted = 1,
+                    isTranslating = false,
+                    translationWarning = null,
+                    preferences = com.example.model.UserPreferences(),
+                    chatState = com.example.ui.viewmodel.ChatUiState(),
+                    onSelectBatchIndex = {},
+                    onSelectLanguage = {},
+                    onRefreshForProfile = {},
+                    onDismissTranslationWarning = {},
+                    onBackToScanner = {},
+                    onOpenChat = {},
+                    onCloseChat = {},
+                    onSendChatMessage = {},
+                    onDismissChatError = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("report_content_list")
+            .performScrollToNode(hasTestTag("spatial_size_weight_card"))
+        composeRule.onNodeWithTag("calorie_estimate_tile").assertExists()
+    }
+
+    @Test
+    fun `default language is Mongolian and storage units localize cleanly`() {
+        val defaultPrefs = UserPreferences()
+        assertEquals(AppLanguage.MONGOLIAN, defaultPrefs.language)
+        assertEquals(ReportSectionType.DEFAULT_ORDER, defaultPrefs.reportSectionOrder)
+
+        val stats = com.example.util.ScanStorageStats(fileCount = 2, totalBytes = 8192L)
+        assertEquals("8 КБ", stats.formattedSize(AppLanguage.MONGOLIAN))
+        assertEquals("8 KB", stats.formattedSize(AppLanguage.ENGLISH))
+    }
+
+    @Test
+    fun `mongolian sanitizer repairs mixed Arabic Latin lookalikes and leftover English nutrition tokens`() {
+        assertEquals("Төмс", ProduceVisionAiService.sanitizeLocalizedText("Төм\u0633", isMongolian = true))
+        assertEquals("Авокадо", ProduceVisionAiService.sanitizeLocalizedText("Авокадo", isMongolian = true))
+        val sanitizedNutrition = ProduceVisionAiService.sanitizeLocalizedText(
+            "Vitamin C 24% DV · Dietary Fiber 5g · 80 kcal",
+            isMongolian = true
+        )
+        assertTrue(sanitizedNutrition.contains("С витамин"))
+        assertTrue(sanitizedNutrition.contains("% ӨХХ"))
+        assertTrue(sanitizedNutrition.contains("Хүнсний эслэг"))
+        assertTrue(sanitizedNutrition.contains("5г"))
+        assertTrue(sanitizedNutrition.contains("ккал"))
+    }
+
+    @Test
+    fun `report section order serializes and deserializes cleanly`() {
+        val customOrder = listOf(
+            ReportSectionType.RECIPES,
+            ReportSectionType.SIZE_CALORIES,
+            ReportSectionType.RIPENESS,
+            ReportSectionType.STORAGE,
+            ReportSectionType.VITAMINS_NUTRIENTS,
+            ReportSectionType.HEALTH_BENEFITS
+        )
+        val encoded = ReportSectionType.toStorageString(customOrder)
+        val decoded = ReportSectionType.fromStorageString(encoded)
+        assertEquals(customOrder, decoded)
+
+        val partialDecoded = ReportSectionType.fromStorageString("recipes,storage")
+        assertEquals(ReportSectionType.RECIPES, partialDecoded[0])
+        assertEquals(ReportSectionType.STORAGE, partialDecoded[1])
+        assertEquals(ReportSectionType.entries.size, partialDecoded.size)
+    }
+
+    @Test
+    fun `goal focused recipe AI button sends detailed recipe prompt and section order editor updates order`() {
+        val sample = ProduceVisionAiService.parseAnalysisJson(
+            """
+            {
+              "isProduce": true,
+              "produceName": "Төмс",
+              "estimatedWeightGrams": 210,
+              "cookingSuggestions": [
+                {
+                  "title": "Агаар шарагчид болгосон амтат төмс",
+                  "method": "Агаар шарагч",
+                  "prepMinutes": 14,
+                  "nutrientTip": "Кали ба эслэгийг хадгална",
+                  "pairing": "Оливын тос ба сармис",
+                  "goalFocus": "Өндөр эслэг хэрэгтэй"
+                }
+              ]
+            }
+            """.trimIndent(),
+            id = "id-recipe-order",
+            languageCode = "mn"
+        )
+
+        var chatOpened = false
+        var sentPrompt = ""
+        val orderState = androidx.compose.runtime.mutableStateOf(ReportSectionType.DEFAULT_ORDER)
+
+        composeRule.setContent {
+            com.example.ui.theme.RipeWiseTheme {
+                com.example.ui.screens.ProduceReportScreen(
+                    results = listOf(sample),
+                    selectedIndex = 0,
+                    totalAttempted = 1,
+                    isTranslating = false,
+                    translationWarning = null,
+                    preferences = UserPreferences(
+                        language = AppLanguage.MONGOLIAN,
+                        reportSectionOrder = orderState.value
+                    ),
+                    chatState = com.example.ui.viewmodel.ChatUiState(),
+                    onSelectBatchIndex = {},
+                    onSelectLanguage = {},
+                    onRefreshForProfile = {},
+                    onUpdateSectionOrder = { orderState.value = it },
+                    onDismissTranslationWarning = {},
+                    onBackToScanner = {},
+                    onOpenChat = { chatOpened = true },
+                    onCloseChat = {},
+                    onSendChatMessage = { sentPrompt = it },
+                    onDismissChatError = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("report_content_list")
+            .performScrollToNode(hasTestTag("recipe_ai_guide_0"))
+        composeRule.onNodeWithTag("recipe_ai_guide_0").performClick()
+        composeRule.waitForIdle()
+
+        assertTrue(chatOpened)
+        assertTrue(sentPrompt.contains("Агаар шарагчид болгосон амтат төмс"))
+        assertTrue(sentPrompt.contains("Төмс"))
+
+        composeRule.onNodeWithTag("customize_report_order_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("report_order_sheet").assertExists()
+        composeRule.onNodeWithTag("move_down_ripeness").performClick()
+        composeRule.waitForIdle()
+        assertEquals(ReportSectionType.SIZE_CALORIES, orderState.value.first())
+
+        composeRule.onNodeWithTag("reset_report_order_button")
+            .performScrollTo()
+            .performClick()
+        composeRule.waitForIdle()
+        assertEquals(ReportSectionType.DEFAULT_ORDER, orderState.value)
+
+        composeRule.onNodeWithTag("close_report_order_button")
+            .performScrollTo()
+            .performClick()
+        composeRule.waitForIdle()
+    }
+
+    @Test
+    fun `freshness tracker degrades ripeness over elapsed days and advances underripe fruit`() {
+        val oneDayMs = 86_400_000L
+        val scanTime = 1_700_000_000_000L
+
+        val ripeBanana = ProduceVisionAiService.parseAnalysisJson(
+            """
+            {
+              "isProduce": true,
+              "produceName": "Banana",
+              "ripenessStage": "PERFECTLY_RIPE",
+              "ripenessScore": 90,
+              "daysRemainingMin": 1,
+              "daysRemainingMax": 1
+            }
+            """.trimIndent(),
+            id = "banana-1"
+        ).copy(scannedAtMillis = scanTime)
+
+        val sameDay = com.example.util.FreshnessTracker.evaluate(ripeBanana, nowMillis = scanTime + 3_600_000L)
+        assertEquals(0, sameDay.elapsedDays)
+        assertEquals(RipenessStage.PERFECTLY_RIPE, sameDay.projectedStage)
+        assertEquals(90, sameDay.projectedScore)
+        assertEquals(com.example.util.ExpiryUrgency.EXPIRING_SOON, sameDay.urgency)
+
+        val nextDay = com.example.util.FreshnessTracker.evaluate(ripeBanana, nowMillis = scanTime + oneDayMs + 3_600_000L)
+        assertEquals(1, nextDay.elapsedDays)
+        assertTrue(nextDay.hasRipenessChanged)
+        assertTrue(nextDay.scoreDelta < 0)
+        assertEquals(RipenessStage.OVERRIPE, nextDay.projectedStage)
+        assertEquals(com.example.util.ExpiryUrgency.USE_TODAY, nextDay.urgency)
+
+        val expiredDay = com.example.util.FreshnessTracker.evaluate(ripeBanana, nowMillis = scanTime + (3 * oneDayMs))
+        assertEquals(com.example.util.ExpiryUrgency.EXPIRED, expiredDay.urgency)
+        assertTrue(expiredDay.projectedScore < nextDay.projectedScore)
+
+        val greenAvocado = ProduceVisionAiService.parseAnalysisJson(
+            """
+            {
+              "isProduce": true,
+              "produceName": "Hass Avocado",
+              "ripenessStage": "UNDERRIPE",
+              "ripenessScore": 48,
+              "daysRemainingMin": 2,
+              "daysRemainingMax": 4
+            }
+            """.trimIndent(),
+            id = "avo-green"
+        ).copy(scannedAtMillis = scanTime)
+
+        val avocadoAfter2Days = com.example.util.FreshnessTracker.evaluate(
+            greenAvocado,
+            nowMillis = scanTime + (2 * oneDayMs) + 3_600_000L
+        )
+        assertEquals(RipenessStage.PERFECTLY_RIPE, avocadoAfter2Days.projectedStage)
+        assertTrue(avocadoAfter2Days.scoreDelta > 0)
+    }
+
+    @Test
+    fun `pantry screen displays scan timestamp and expiry reminder banner for aged produce`() {
+        val agedMillis = System.currentTimeMillis() - (2L * 86_400_000L)
+        val agedBanana = ProduceVisionAiService.parseAnalysisJson(
+            """
+            {
+              "isProduce": true,
+              "produceName": "Гадил",
+              "ripenessStage": "PERFECTLY_RIPE",
+              "ripenessScore": 88,
+              "daysRemainingMin": 1,
+              "daysRemainingMax": 1
+            }
+            """.trimIndent(),
+            id = "aged-banana",
+            languageCode = "mn"
+        ).copy(scannedAtMillis = agedMillis)
+
+        composeRule.setContent {
+            com.example.ui.theme.RipeWiseTheme {
+                com.example.ui.screens.PantryHistoryScreen(
+                    scans = listOf(agedBanana),
+                    storageStats = com.example.util.ScanStorageStats(),
+                    language = AppLanguage.MONGOLIAN,
+                    expiryRemindersEnabled = true,
+                    onSelectLanguage = {},
+                    onSelectScan = {},
+                    onDeleteScan = {},
+                    onNavigateToScanner = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("pantry_expiry_alert_banner").assertExists()
+        composeRule.onNodeWithTag("pantry_item_aged-banana").assertExists()
+    }
+
+    @Test
+    fun `report screen displays scan date time and ripeness drop notice on aged item`() {
+        val agedMillis = System.currentTimeMillis() - (2L * 86_400_000L)
+        val agedBanana = ProduceVisionAiService.parseAnalysisJson(
+            """
+            {
+              "isProduce": true,
+              "produceName": "Banana",
+              "ripenessStage": "PERFECTLY_RIPE",
+              "ripenessScore": 88,
+              "daysRemainingMin": 1,
+              "daysRemainingMax": 1
+            }
+            """.trimIndent(),
+            id = "aged-banana-report",
+            languageCode = "en"
+        ).copy(scannedAtMillis = agedMillis)
+
+        composeRule.setContent {
+            com.example.ui.theme.RipeWiseTheme {
+                com.example.ui.screens.ProduceReportScreen(
+                    results = listOf(agedBanana),
+                    selectedIndex = 0,
+                    totalAttempted = 1,
+                    isTranslating = false,
+                    translationWarning = null,
+                    preferences = UserPreferences(language = AppLanguage.ENGLISH),
+                    chatState = com.example.ui.viewmodel.ChatUiState(),
+                    onSelectBatchIndex = {},
+                    onSelectLanguage = {},
+                    onRefreshForProfile = {},
+                    onDismissTranslationWarning = {},
+                    onBackToScanner = {},
+                    onOpenChat = {},
+                    onCloseChat = {},
+                    onSendChatMessage = {},
+                    onDismissChatError = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("report_content_list")
+            .performScrollToNode(hasTestTag("ripeness_degradation_notice"))
+        composeRule.onNodeWithTag("report_scanned_timestamp").assertExists()
+        composeRule.onNodeWithTag("ripeness_degradation_notice").assertExists()
+    }
+
+    @Test
+    fun `preferences screen renders expiry reminders switch and invokes callback`() {
+        var enabledState = true
+        composeRule.setContent {
+            com.example.ui.theme.RipeWiseTheme {
+                com.example.ui.screens.ProfilePreferencesScreen(
+                    preferences = UserPreferences(
+                        language = AppLanguage.ENGLISH,
+                        expiryRemindersEnabled = enabledState
+                    ),
+                    hasHardwareDepthSensor = false,
+                    onSelectLanguage = {},
+                    onToggleNutrientNeed = {},
+                    onToggleDietaryGoal = {},
+                    onToggleHealthFocus = {},
+                    onToggleCookingTool = {},
+                    onSetLightingCalibration = {},
+                    onSetSpatialMode = {},
+                    onSetSpatialScaleHint = {},
+                    onSetExpiryReminders = { enabledState = it }
+                )
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("expiry_reminders_switch")
+            .performScrollTo()
+            .performClick()
+        composeRule.waitForIdle()
+        assertEquals(false, enabledState)
     }
 }
 

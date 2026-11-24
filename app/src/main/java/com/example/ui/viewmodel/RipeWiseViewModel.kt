@@ -14,6 +14,7 @@ import com.example.data.ScanHistoryRepository
 import com.example.model.AppLanguage
 import com.example.model.ChatMessage
 import com.example.model.ProduceAnalysisResult
+import com.example.model.ReportSectionType
 import com.example.model.SampleProduce
 import com.example.model.SampleProduceCatalog
 import com.example.model.SpatialScaleHint
@@ -21,10 +22,12 @@ import com.example.model.UserPreferences
 import com.example.ui.i18n.stringsFor
 import com.example.util.DepthCapabilityInfo
 import com.example.util.DepthSensorHelper
+import com.example.util.ExpiryReminderManager
 import com.example.util.ImageUtils
 import com.example.util.ScanStorageStats
 import com.google.firebase.ai.Chat
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
@@ -34,6 +37,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -121,12 +125,43 @@ class RipeWiseViewModel(application: Application) : AndroidViewModel(application
     private var chatLoadJob: Job? = null
     private var chatStreamJob: Job? = null
     private var translateJob: Job? = null
+    private var pantryTranslateJob: Job? = null
+    private val translationCache = ConcurrentHashMap<String, ProduceAnalysisResult>()
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { historyRepository.cleanupOrphanedImages(getApplication()) }
             _scanStorageStats.value = ImageUtils.getScanStorageStats(getApplication())
         }
+        viewModelScope.launch {
+            val prefs = preferencesRepository.userPreferences.first()
+            val scans = historyRepository.recentScans.first()
+            scans.forEach { rememberTranslation(it) }
+            if (prefs.expiryRemindersEnabled && scans.isNotEmpty()) {
+                withContext(Dispatchers.IO) {
+                    ExpiryReminderManager.schedulePeriodicCheck(getApplication())
+                    ExpiryReminderManager.checkAndNotifyIfNeeded(
+                        context = getApplication(),
+                        scans = scans,
+                        language = prefs.language
+                    )
+                }
+            }
+            if (scans.any { it.languageCode != prefs.language.code }) {
+                localizePantryScans(prefs)
+            }
+        }
+    }
+
+    private fun cacheKey(id: String, languageCode: String): String = "${id}_${languageCode}"
+
+    private fun rememberTranslation(result: ProduceAnalysisResult) {
+        translationCache[cacheKey(result.id, result.languageCode)] = result
+    }
+
+    private fun invalidateScanCache(id: String) {
+        val prefix = "${id}_"
+        translationCache.keys.filter { it.startsWith(prefix) }.forEach { translationCache.remove(it) }
     }
 
     private fun refreshStorageStats() {
@@ -230,6 +265,7 @@ class RipeWiseViewModel(application: Application) : AndroidViewModel(application
                                     )
                                     val savedPath = ImageUtils.saveScanBitmap(getApplication(), bitmap)
                                     val result = analyzed.copy(localImagePath = savedPath)
+                                    rememberTranslation(result)
                                     try {
                                         historyRepository.saveScan(result)
                                     } catch (saveError: Throwable) {
@@ -284,6 +320,11 @@ class RipeWiseViewModel(application: Application) : AndroidViewModel(application
                 val validResults = indexedResults.filterNotNull()
                 refreshStorageStats()
                 if (validResults.isNotEmpty()) {
+                    if (prefs.expiryRemindersEnabled) {
+                        withContext(Dispatchers.IO) {
+                            ExpiryReminderManager.schedulePeriodicCheck(getApplication())
+                        }
+                    }
                     loadOrPrepareChatForResult(validResults.first(), prefs)
                     _scanState.value = ScanUiState.Success(
                         results = validResults,
@@ -397,8 +438,12 @@ class RipeWiseViewModel(application: Application) : AndroidViewModel(application
                 null
             }
             val result = analyzed.copy(localImagePath = savedPath)
+            rememberTranslation(result)
             withContext(Dispatchers.IO) {
                 historyRepository.saveScan(result)
+                if (prefs.expiryRemindersEnabled) {
+                    ExpiryReminderManager.schedulePeriodicCheck(getApplication())
+                }
             }
             refreshStorageStats()
             loadOrPrepareChatForResult(result, prefs)
@@ -438,19 +483,29 @@ class RipeWiseViewModel(application: Application) : AndroidViewModel(application
         val safeIndex = index.coerceIn(0, current.results.lastIndex)
         if (current.selectedIndex == safeIndex) return
         translateJob?.cancel()
+        val rawTarget = current.results[safeIndex]
+        rememberTranslation(rawTarget)
+        val prefs = userPreferences.value
+        val cached = translationCache[cacheKey(rawTarget.id, prefs.language.code)]
+        val effectiveTarget = cached ?: rawTarget
+        val updatedResults = if (cached != null && cached != rawTarget) {
+            current.results.toMutableList().apply { this[safeIndex] = cached }
+        } else {
+            current.results
+        }
         _scanState.value = current.copy(
+            results = updatedResults,
             selectedIndex = safeIndex,
             isTranslating = false,
             translationWarning = null
         )
-        val targetResult = current.results[safeIndex]
         chatStreamJob?.cancel()
         chatLoadJob?.cancel()
         chatLoadJob = viewModelScope.launch {
-            val prefs = preferencesRepository.userPreferences.first()
-            loadOrPrepareChatForResult(targetResult, prefs)
-            if (targetResult.languageCode != prefs.language.code) {
-                translateItemAt(safeIndex, targetResult, prefs)
+            val latestPrefs = preferencesRepository.userPreferences.first()
+            loadOrPrepareChatForResult(effectiveTarget, latestPrefs)
+            if (effectiveTarget.languageCode != latestPrefs.language.code) {
+                translateItemAt(safeIndex, effectiveTarget, latestPrefs)
             }
         }
     }
@@ -459,17 +514,20 @@ class RipeWiseViewModel(application: Application) : AndroidViewModel(application
         chatStreamJob?.cancel()
         chatLoadJob?.cancel()
         translateJob?.cancel()
+        rememberTranslation(result)
         viewModelScope.launch {
             val prefs = preferencesRepository.userPreferences.first()
-            val needsTranslation = result.languageCode != prefs.language.code
+            val cached = translationCache[cacheKey(result.id, prefs.language.code)]
+            val displayResult = cached ?: result
+            val needsTranslation = displayResult.languageCode != prefs.language.code
             _scanState.value = ScanUiState.Success(
-                results = listOf(result),
+                results = listOf(displayResult),
                 selectedIndex = 0,
                 isTranslating = needsTranslation
             )
-            loadOrPrepareChatForResult(result, prefs, openSheet = false)
+            loadOrPrepareChatForResult(displayResult, prefs, openSheet = false)
             if (needsTranslation) {
-                translateItemAt(0, result, prefs)
+                translateItemAt(0, displayResult, prefs)
             }
         }
     }
@@ -485,6 +543,34 @@ class RipeWiseViewModel(application: Application) : AndroidViewModel(application
         sourceResult: ProduceAnalysisResult,
         prefs: UserPreferences
     ) {
+        rememberTranslation(sourceResult)
+        val cached = translationCache[cacheKey(sourceResult.id, prefs.language.code)]
+        if (cached != null) {
+            _scanState.update { state ->
+                if (state is ScanUiState.Success && index in state.results.indices &&
+                    state.results[index].id == sourceResult.id
+                ) {
+                    val updatedList = state.results.toMutableList().apply {
+                        this[index] = cached
+                    }
+                    state.copy(results = updatedList, isTranslating = false, translationWarning = null)
+                } else if (state is ScanUiState.Success) {
+                    state.copy(isTranslating = false, translationWarning = null)
+                } else {
+                    state
+                }
+            }
+            viewModelScope.launch(Dispatchers.IO) {
+                historyRepository.saveScan(cached)
+            }
+            if (activeResultForChat?.id == cached.id) {
+                viewModelScope.launch {
+                    loadOrPrepareChatForResult(cached, prefs)
+                }
+            }
+            return
+        }
+
         translateJob?.cancel()
         translateJob = viewModelScope.launch {
             _scanState.update { state ->
@@ -501,6 +587,7 @@ class RipeWiseViewModel(application: Application) : AndroidViewModel(application
                     hasHardwareDepthSensor = depthCapability.hasHardwareDepthSensor,
                     spatialModeEnabled = prefs.spatialModeEnabled
                 )
+                rememberTranslation(translated)
                 withContext(Dispatchers.IO) {
                     historyRepository.saveScan(translated)
                 }
@@ -587,6 +674,8 @@ class RipeWiseViewModel(application: Application) : AndroidViewModel(application
                     existingId = active.id
                 ).copy(scannedAtMillis = active.scannedAtMillis)
 
+                invalidateScanCache(active.id)
+                rememberTranslation(refreshed)
                 withContext(Dispatchers.IO) {
                     historyRepository.saveScan(refreshed)
                 }
@@ -815,6 +904,7 @@ class RipeWiseViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun deleteScan(id: String) {
+        invalidateScanCache(id)
         if (activeResultForChat?.id == id) {
             chatStreamJob?.cancel()
             chatLoadJob?.cancel()
@@ -847,6 +937,8 @@ class RipeWiseViewModel(application: Application) : AndroidViewModel(application
         chatStreamJob?.cancel()
         chatLoadJob?.cancel()
         translateJob?.cancel()
+        pantryTranslateJob?.cancel()
+        translationCache.clear()
         activeResultForChat = null
         activeChatSession = null
         _chatState.value = ChatUiState()
@@ -865,7 +957,15 @@ class RipeWiseViewModel(application: Application) : AndroidViewModel(application
             val updatedPrefs = userPreferences.value.copy(language = language)
             val currentSuccess = _scanState.value as? ScanUiState.Success
             if (currentSuccess != null) {
-                val active = currentSuccess.currentResult
+                val mappedResults = currentSuccess.results.map { item ->
+                    rememberTranslation(item)
+                    translationCache[cacheKey(item.id, language.code)] ?: item
+                }
+                val active = mappedResults[currentSuccess.selectedIndex.coerceIn(0, mappedResults.lastIndex)]
+                _scanState.value = currentSuccess.copy(
+                    results = mappedResults,
+                    translationWarning = null
+                )
                 if (active.languageCode != language.code) {
                     translateItemAt(currentSuccess.selectedIndex, active, updatedPrefs)
                 } else {
@@ -877,9 +977,12 @@ class RipeWiseViewModel(application: Application) : AndroidViewModel(application
                             state
                         }
                     }
+                    withContext(Dispatchers.IO) {
+                        historyRepository.saveScan(active)
+                    }
                 }
             }
-            val activeChatItem = activeResultForChat
+            val activeChatItem = (_scanState.value as? ScanUiState.Success)?.currentResult ?: activeResultForChat
             if (activeChatItem != null && !_chatState.value.isStreaming) {
                 val savedHistory = withContext(Dispatchers.IO) {
                     historyRepository.getChatMessages(activeChatItem.id)
@@ -897,6 +1000,49 @@ class RipeWiseViewModel(application: Application) : AndroidViewModel(application
                 )
                 _chatState.update { it.copy(messages = listOf(greeting) + savedHistory) }
             }
+            localizePantryScans(updatedPrefs)
+        }
+    }
+
+    private fun localizePantryScans(prefs: UserPreferences) {
+        pantryTranslateJob?.cancel()
+        pantryTranslateJob = viewModelScope.launch {
+            val activeId = (_scanState.value as? ScanUiState.Success)?.currentResult?.id
+            val pending = historyRepository.recentScans.first()
+                .filter { it.languageCode != prefs.language.code && it.id != activeId }
+                .take(8)
+            for (item in pending) {
+                rememberTranslation(item)
+                val cached = translationCache[cacheKey(item.id, prefs.language.code)]
+                if (cached != null) {
+                    withContext(Dispatchers.IO) { historyRepository.saveScan(cached) }
+                    continue
+                }
+                try {
+                    val translated = aiService.translateAnalysisResult(
+                        result = item,
+                        targetLanguage = prefs.language,
+                        hasHardwareDepthSensor = depthCapability.hasHardwareDepthSensor,
+                        spatialModeEnabled = prefs.spatialModeEnabled
+                    )
+                    rememberTranslation(translated)
+                    withContext(Dispatchers.IO) {
+                        historyRepository.saveScan(translated)
+                    }
+                    delay(200)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Background pantry item localization skipped for ${item.id}", e)
+                    break
+                }
+            }
+        }
+    }
+
+    fun setReportSectionOrder(order: List<ReportSectionType>) {
+        viewModelScope.launch {
+            preferencesRepository.setReportSectionOrder(order)
         }
     }
 
@@ -939,6 +1085,40 @@ class RipeWiseViewModel(application: Application) : AndroidViewModel(application
     fun setSpatialScaleHint(hint: SpatialScaleHint) {
         viewModelScope.launch {
             preferencesRepository.setSpatialScaleHint(hint)
+        }
+    }
+
+    fun setExpiryRemindersEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setExpiryRemindersEnabled(enabled)
+            val updatedPrefs = userPreferences.value.copy(expiryRemindersEnabled = enabled)
+            withContext(Dispatchers.IO) {
+                if (enabled) {
+                    ExpiryReminderManager.schedulePeriodicCheck(getApplication())
+                    ExpiryReminderManager.checkAndNotifyIfNeeded(
+                        context = getApplication(),
+                        scans = recentScans.value,
+                        language = updatedPrefs.language
+                    )
+                } else {
+                    ExpiryReminderManager.cancelPeriodicCheck(getApplication())
+                }
+            }
+        }
+    }
+
+    fun triggerExpiryCheckNow() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val prefs = preferencesRepository.userPreferences.first()
+            if (prefs.expiryRemindersEnabled) {
+                ExpiryReminderManager.schedulePeriodicCheck(getApplication())
+                ExpiryReminderManager.checkAndNotifyIfNeeded(
+                    context = getApplication(),
+                    scans = recentScans.value,
+                    language = prefs.language,
+                    forceSameDay = true
+                )
+            }
         }
     }
 }

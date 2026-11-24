@@ -1,5 +1,9 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,15 +27,23 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CameraAlt
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.Eco
 import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.NotificationsNone
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -53,8 +65,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
@@ -63,7 +77,12 @@ import com.example.model.ProduceAnalysisResult
 import com.example.model.RipenessStage
 import com.example.ui.components.ProduceArtworkImage
 import com.example.ui.components.RipenessBadge
+import com.example.ui.i18n.UiStrings
 import com.example.ui.i18n.stringsFor
+import com.example.util.ExpiryReminderManager
+import com.example.util.ExpiryUrgency
+import com.example.util.FreshnessProjection
+import com.example.util.FreshnessTracker
 import com.example.util.ScanStorageStats
 
 private enum class PantryFilterKey {
@@ -75,6 +94,9 @@ fun PantryHistoryScreen(
     scans: List<ProduceAnalysisResult>,
     storageStats: ScanStorageStats = ScanStorageStats(),
     language: AppLanguage,
+    expiryRemindersEnabled: Boolean = true,
+    onSetExpiryReminders: (Boolean) -> Unit = {},
+    onTriggerExpiryCheck: () -> Unit = {},
     onSelectLanguage: (AppLanguage) -> Unit,
     onSelectScan: (ProduceAnalysisResult) -> Unit,
     onDeleteScan: (String) -> Unit,
@@ -83,19 +105,39 @@ fun PantryHistoryScreen(
     modifier: Modifier = Modifier
 ) {
     val strings = stringsFor(language)
+    val context = LocalContext.current
     var selectedFilter by rememberSaveable { mutableStateOf(PantryFilterKey.ALL) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var showClearConfirmDialog by remember { mutableStateOf(false) }
 
-    val filteredScans = remember(scans, selectedFilter, searchQuery) {
+    var hasNotificationPermission by remember {
+        mutableStateOf(ExpiryReminderManager.hasNotificationPermission(context))
+    }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasNotificationPermission = granted
+        if (granted) {
+            onSetExpiryReminders(true)
+            onTriggerExpiryCheck()
+        }
+    }
+
+    val projectedItems = remember(scans) {
+        scans.map { item -> item to FreshnessTracker.evaluate(item) }
+    }
+
+    val urgentItems = remember(projectedItems) {
+        projectedItems.filter { (_, projection) -> projection.urgency != ExpiryUrgency.FRESH }
+    }
+
+    val filteredScans = remember(projectedItems, selectedFilter, searchQuery) {
         val query = searchQuery.trim().lowercase()
-        scans.filter { item ->
+        projectedItems.filter { (item, projection) ->
             val matchesFilter = when (selectedFilter) {
-                PantryFilterKey.USE_SOON -> item.ripenessStage == RipenessStage.OVERRIPE ||
-                    item.ripenessStage == RipenessStage.DAMAGED ||
-                    item.daysRemainingMax <= 2
-                PantryFilterKey.PERFECTLY_RIPE -> item.ripenessStage == RipenessStage.PERFECTLY_RIPE
-                PantryFilterKey.UNDERRIPE -> item.ripenessStage == RipenessStage.UNDERRIPE
+                PantryFilterKey.USE_SOON -> projection.urgency != ExpiryUrgency.FRESH
+                PantryFilterKey.PERFECTLY_RIPE -> projection.projectedStage == RipenessStage.PERFECTLY_RIPE
+                PantryFilterKey.UNDERRIPE -> projection.projectedStage == RipenessStage.UNDERRIPE
                 PantryFilterKey.ALL -> true
             }
             val matchesQuery = query.isEmpty() ||
@@ -185,13 +227,13 @@ fun PantryHistoryScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                            .padding(start = 12.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                             modifier = Modifier.weight(1f)
                         ) {
                             Icon(
@@ -201,16 +243,21 @@ fun PantryHistoryScreen(
                                 modifier = Modifier.size(18.dp)
                             )
                             Text(
-                                text = strings.pantryStorageSummary(scans.size, storageStats.formattedSize()),
-                                style = MaterialTheme.typography.labelLarge,
+                                text = strings.pantryStorageSummary(
+                                    scans.size,
+                                    storageStats.formattedSize(language)
+                                ),
+                                style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.testTag("pantry_storage_summary")
                             )
                         }
+                        Spacer(modifier = Modifier.width(4.dp))
                         TextButton(
                             onClick = { showClearConfirmDialog = true },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                             modifier = Modifier
                                 .minimumInteractiveComponentSize()
                                 .testTag("clear_all_pantry_button")
@@ -219,15 +266,113 @@ fun PantryHistoryScreen(
                                 imageVector = Icons.Rounded.DeleteSweep,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(16.dp)
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
+                            Spacer(modifier = Modifier.width(3.dp))
                             Text(
                                 text = strings.pantryClearAllLabel,
+                                style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.error,
                                 maxLines = 1,
                                 softWrap = false
                             )
+                        }
+                    }
+                }
+            }
+
+            if (urgentItems.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                val previewNames = urgentItems.take(3).joinToString(", ") { it.first.produceName }
+                val alertsReady = expiryRemindersEnabled && hasNotificationPermission
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.85f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
+                        .testTag("pantry_expiry_alert_banner")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.WarningAmber,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = strings.pantryExpiryAlertTitle(urgentItems.size),
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (alertsReady) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f),
+                                    modifier = Modifier.testTag("alerts_active_badge")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.NotificationsActive,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Text(
+                                            text = strings.alertsActiveBadge,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        Text(
+                            text = strings.pantryExpiryAlertBody(previewNames),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                        if (!alertsReady) {
+                            FilledTonalButton(
+                                onClick = {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                        !ExpiryReminderManager.hasNotificationPermission(context)
+                                    ) {
+                                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    } else {
+                                        onSetExpiryReminders(true)
+                                        onTriggerExpiryCheck()
+                                    }
+                                },
+                                shape = CircleShape,
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("enable_expiry_alerts_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.NotificationsNone,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = strings.enableAlertsButton,
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                            }
                         }
                     }
                 }
@@ -291,9 +436,22 @@ fun PantryHistoryScreen(
                         PantryFilterKey.PERFECTLY_RIPE -> strings.pantryFilterRipe
                         PantryFilterKey.UNDERRIPE -> strings.pantryFilterUnder
                     }
+                    val leadingIcon = when (filter) {
+                        PantryFilterKey.ALL -> Icons.Rounded.AutoAwesome
+                        PantryFilterKey.USE_SOON -> Icons.Rounded.Schedule
+                        PantryFilterKey.PERFECTLY_RIPE -> Icons.Rounded.CheckCircle
+                        PantryFilterKey.UNDERRIPE -> Icons.Rounded.Eco
+                    }
                     FilterChip(
                         selected = selectedFilter == filter,
                         onClick = { selectedFilter = filter },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = leadingIcon,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
                         label = { Text(label) },
                         shape = CircleShape,
                         colors = FilterChipDefaults.filterChipColors(
@@ -321,12 +479,12 @@ fun PantryHistoryScreen(
                     contentPadding = PaddingValues(bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(filteredScans, key = { it.id }) { item ->
+                    items(filteredScans, key = { it.first.id }) { (item, projection) ->
                         PantryScanCard(
                             item = item,
+                            projection = projection,
                             language = language,
-                            weightUnit = strings.weightUnit,
-                            deleteContentDesc = strings.deleteItemContentDesc(item.produceName),
+                            strings = strings,
                             onClick = { onSelectScan(item) },
                             onDelete = { onDeleteScan(item.id) }
                         )
@@ -340,12 +498,31 @@ fun PantryHistoryScreen(
 @Composable
 private fun PantryScanCard(
     item: ProduceAnalysisResult,
+    projection: FreshnessProjection,
     language: AppLanguage,
-    weightUnit: String,
-    deleteContentDesc: String,
+    strings: UiStrings,
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val urgencyColor = when (projection.urgency) {
+        ExpiryUrgency.EXPIRED -> MaterialTheme.colorScheme.errorContainer
+        ExpiryUrgency.USE_TODAY -> MaterialTheme.colorScheme.tertiaryContainer
+        ExpiryUrgency.EXPIRING_SOON -> MaterialTheme.colorScheme.secondaryContainer
+        ExpiryUrgency.FRESH -> MaterialTheme.colorScheme.surfaceContainerLow
+    }
+    val urgencyTextColor = when (projection.urgency) {
+        ExpiryUrgency.EXPIRED -> MaterialTheme.colorScheme.onErrorContainer
+        ExpiryUrgency.USE_TODAY -> MaterialTheme.colorScheme.onTertiaryContainer
+        ExpiryUrgency.EXPIRING_SOON -> MaterialTheme.colorScheme.onSecondaryContainer
+        ExpiryUrgency.FRESH -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val urgencyLabel = when (projection.urgency) {
+        ExpiryUrgency.EXPIRED -> strings.expiryExpiredLabel
+        ExpiryUrgency.USE_TODAY -> strings.expiryUseTodayLabel
+        ExpiryUrgency.EXPIRING_SOON -> strings.expiryTomorrowLabel
+        ExpiryUrgency.FRESH -> strings.expiryDaysLeftLabel(projection.remainingDaysMax.coerceAtLeast(1))
+    }
+
     Surface(
         shape = RoundedCornerShape(22.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -378,11 +555,19 @@ private fun PantryScanCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    RipenessBadge(stage = item.ripenessStage, language = language)
+                    RipenessBadge(stage = projection.projectedStage, language = language)
+                    val metaLabel = buildString {
+                        append("~${item.estimatedWeightGrams}${strings.weightUnit}")
+                        if (item.estimatedCaloriesKcal > 0) {
+                            append(" · ~${item.estimatedCaloriesKcal} ${strings.kcalUnit}")
+                        }
+                    }
                     Text(
-                        text = "~${item.estimatedWeightGrams}$weightUnit",
+                        text = metaLabel,
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 Text(
@@ -392,13 +577,52 @@ private fun PantryScanCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                Surface(
+                    shape = CircleShape,
+                    color = urgencyColor
+                ) {
+                    Text(
+                        text = urgencyLabel,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                        color = urgencyTextColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
                 Text(
-                    text = item.bestTimeToConsume,
-                    style = MaterialTheme.typography.bodySmall,
+                    text = strings.scannedAtLabel(
+                        FreshnessTracker.formatScanTimestamp(item.scannedAtMillis, language)
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (projection.hasRipenessChanged) {
+                    val deltaText = if (projection.scoreDelta < 0) {
+                        strings.ripenessDroppedLabel(
+                            projection.originalScore,
+                            projection.projectedScore
+                        )
+                    } else {
+                        strings.ripenessImprovedLabel(
+                            projection.originalScore,
+                            projection.projectedScore
+                        )
+                    }
+                    Text(
+                        text = deltaText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (projection.scoreDelta < 0) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
             IconButton(
                 onClick = onDelete,
@@ -408,7 +632,7 @@ private fun PantryScanCard(
             ) {
                 Icon(
                     imageVector = Icons.Rounded.DeleteOutline,
-                    contentDescription = deleteContentDesc,
+                    contentDescription = strings.deleteItemContentDesc(item.produceName),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }

@@ -1,5 +1,9 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.ViewInAr
 import androidx.compose.material.icons.rounded.WbSunny
 import androidx.compose.material3.FilterChip
@@ -34,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.model.AppLanguage
@@ -41,6 +47,7 @@ import com.example.model.SpatialScaleHint
 import com.example.model.UserPreferences
 import com.example.ui.i18n.localizePreferenceOption
 import com.example.ui.i18n.stringsFor
+import com.example.util.ExpiryReminderManager
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -55,9 +62,18 @@ fun ProfilePreferencesScreen(
     onSetLightingCalibration: (Boolean) -> Unit,
     onSetSpatialMode: (Boolean) -> Unit,
     onSetSpatialScaleHint: (SpatialScaleHint) -> Unit,
+    onSetExpiryReminders: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val strings = stringsFor(preferences.language)
+    val context = LocalContext.current
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            onSetExpiryReminders(true)
+        }
+    }
 
     Box(
         modifier = modifier
@@ -284,6 +300,52 @@ fun ProfilePreferencesScreen(
                         checked = preferences.lightingCalibrationEnabled,
                         onCheckedChange = onSetLightingCalibration,
                         modifier = Modifier.testTag("lighting_calibration_switch")
+                    )
+                }
+            }
+
+            // Expiry & Ripeness Reminders Toggle
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(22.dp))
+            ) {
+                Row(
+                    modifier = Modifier.padding(18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.NotificationsActive,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = strings.expiryRemindersTitle,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = strings.expiryRemindersSubtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = preferences.expiryRemindersEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled &&
+                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                !ExpiryReminderManager.hasNotificationPermission(context)
+                            ) {
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                            onSetExpiryReminders(enabled)
+                        },
+                        modifier = Modifier.testTag("expiry_reminders_switch")
                     )
                 }
             }

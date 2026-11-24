@@ -22,6 +22,32 @@ enum class ResultFilterTab {
     USAGE
 }
 
+enum class ReportSectionType(val key: String) {
+    RIPENESS("ripeness"),
+    SIZE_CALORIES("size_calories"),
+    STORAGE("storage"),
+    VITAMINS_NUTRIENTS("vitamins_nutrients"),
+    HEALTH_BENEFITS("health_benefits"),
+    RECIPES("recipes");
+
+    companion object {
+        val DEFAULT_ORDER: List<ReportSectionType> = entries.toList()
+
+        fun fromStorageString(raw: String?): List<ReportSectionType> {
+            if (raw.isNullOrBlank()) return DEFAULT_ORDER
+            val parsed = raw.split(",")
+                .mapNotNull { token -> entries.firstOrNull { it.key == token.trim() } }
+                .distinct()
+            val missing = entries.filterNot { it in parsed }
+            return parsed + missing
+        }
+
+        fun toStorageString(order: List<ReportSectionType>): String {
+            return (order.distinct() + entries.filterNot { it in order }).joinToString(",") { it.key }
+        }
+    }
+}
+
 enum class RipenessStage(val labelEn: String, val labelMn: String) {
     UNDERRIPE("Underripe", "Түүхийвтэр"),
     PERFECTLY_RIPE("Perfectly Ripe", "Яг боловсорсон"),
@@ -65,7 +91,8 @@ data class CookingSuggestion(
     val method: String,
     val prepMinutes: Int,
     val nutrientTip: String,
-    val pairing: String
+    val pairing: String,
+    val goalFocus: String = ""
 )
 
 data class ProduceAnalysisResult(
@@ -79,6 +106,8 @@ data class ProduceAnalysisResult(
     val estimatedLengthCm: Double,
     val estimatedWidthCm: Double,
     val estimatedWeightGrams: Int,
+    val estimatedCaloriesKcal: Int = 0,
+    val caloriesPer100g: Int = 0,
     val servingWeightSummary: String,
     val spatialMethodNote: String,
     val lightingNote: String,
@@ -111,14 +140,16 @@ data class ChatMessage(
 )
 
 data class UserPreferences(
-    val language: AppLanguage = AppLanguage.ENGLISH,
+    val language: AppLanguage = AppLanguage.MONGOLIAN,
     val dietaryGoals: Set<String> = setOf("Plant-Forward", "Whole Foods"),
     val nutrientNeeds: Set<String> = setOf("High Fiber Needed", "Vitamin D Support", "Iron Boost"),
     val healthFocuses: Set<String> = setOf("Skin Glow", "Immunity", "Gut & Digestion"),
     val cookingTools: Set<String> = setOf("Air Fryer", "Steamer", "High-Speed Blender"),
     val lightingCalibrationEnabled: Boolean = true,
     val spatialModeEnabled: Boolean = true,
-    val spatialScaleHint: SpatialScaleHint = SpatialScaleHint.AUTO
+    val spatialScaleHint: SpatialScaleHint = SpatialScaleHint.AUTO,
+    val reportSectionOrder: List<ReportSectionType> = ReportSectionType.DEFAULT_ORDER,
+    val expiryRemindersEnabled: Boolean = true
 ) {
     companion object {
         val ALL_DIETARY_GOALS = listOf(

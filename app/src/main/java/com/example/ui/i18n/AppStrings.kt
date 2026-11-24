@@ -1,6 +1,8 @@
 package com.example.ui.i18n
 
 import com.example.model.AppLanguage
+import com.example.model.CookingSuggestion
+import com.example.model.ReportSectionType
 import com.example.model.ResultFilterTab
 
 data class UiStrings(
@@ -107,7 +109,40 @@ data class UiStrings(
     val cancelLabel: String,
     val openSettingsLabel: String,
     val flashlightOnContentDesc: String,
-    val flashlightOffContentDesc: String
+    val flashlightOffContentDesc: String,
+    val kcalUnit: String,
+    val approxCalories: String,
+    val per100gLabel: String,
+    val recipeStepsAiButton: String,
+    val customizeOrderLabel: String,
+    val customizeOrderTitle: String,
+    val customizeOrderSubtitle: String,
+    val resetOrderLabel: String,
+    val doneLabel: String,
+    val moveUpContentDesc: String,
+    val moveDownContentDesc: String,
+    val sectionRipenessLabel: String,
+    val sectionSizeCaloriesLabel: String,
+    val sectionStorageLabel: String,
+    val sectionVitaminsNutrientsLabel: String,
+    val sectionHealthBenefitsLabel: String,
+    val sectionRecipesLabel: String,
+    val scannedAtLabel: (String) -> String,
+    val expiryExpiredLabel: String,
+    val expiryUseTodayLabel: String,
+    val expiryTomorrowLabel: String,
+    val expiryDaysLeftLabel: (Int) -> String,
+    val ripenessDroppedLabel: (Int, Int) -> String,
+    val ripenessImprovedLabel: (Int, Int) -> String,
+    val pantryExpiryAlertTitle: (Int) -> String,
+    val pantryExpiryAlertBody: (String) -> String,
+    val enableAlertsButton: String,
+    val alertsActiveBadge: String,
+    val expiryRemindersTitle: String,
+    val expiryRemindersSubtitle: String,
+    val expiryNotifChannelName: String,
+    val expiryNotifTitle: (Int) -> String,
+    val expiryNotifBody: (String) -> String
 ) {
     fun filterLabel(tab: ResultFilterTab): String = when (tab) {
         ResultFilterTab.ALL -> filterAll
@@ -115,6 +150,15 @@ data class UiStrings(
         ResultFilterTab.VITAMINS -> filterVitamins
         ResultFilterTab.NUTRIENTS -> filterNutrients
         ResultFilterTab.USAGE -> filterUsage
+    }
+
+    fun sectionLabel(section: ReportSectionType): String = when (section) {
+        ReportSectionType.RIPENESS -> sectionRipenessLabel
+        ReportSectionType.SIZE_CALORIES -> sectionSizeCaloriesLabel
+        ReportSectionType.STORAGE -> sectionStorageLabel
+        ReportSectionType.VITAMINS_NUTRIENTS -> sectionVitaminsNutrientsLabel
+        ReportSectionType.HEALTH_BENEFITS -> sectionHealthBenefitsLabel
+        ReportSectionType.RECIPES -> sectionRecipesLabel
     }
 }
 
@@ -224,7 +268,40 @@ private val EnglishStrings = UiStrings(
     cancelLabel = "Cancel",
     openSettingsLabel = "Open Settings",
     flashlightOnContentDesc = "Turn flashlight off",
-    flashlightOffContentDesc = "Turn flashlight on"
+    flashlightOffContentDesc = "Turn flashlight on",
+    kcalUnit = "kcal",
+    approxCalories = "Est. Calories",
+    per100gLabel = "/ 100g",
+    recipeStepsAiButton = "Step-by-Step Guide · Ask AI",
+    customizeOrderLabel = "Reorder",
+    customizeOrderTitle = "Customize Info Order",
+    customizeOrderSubtitle = "Move sections up or down to put what matters most at the top.",
+    resetOrderLabel = "Reset Default",
+    doneLabel = "Done",
+    moveUpContentDesc = "Move section up",
+    moveDownContentDesc = "Move section down",
+    sectionRipenessLabel = "Ripeness & Best Time",
+    sectionSizeCaloriesLabel = "3D Size, Weight & Calories",
+    sectionStorageLabel = "Smart Storage",
+    sectionVitaminsNutrientsLabel = "Vitamins, Fiber & Minerals",
+    sectionHealthBenefitsLabel = "Health Benefits",
+    sectionRecipesLabel = "Goal-Focused Food & Recipes",
+    scannedAtLabel = { ts -> "Scanned: $ts" },
+    expiryExpiredLabel = "Past peak · Check now",
+    expiryUseTodayLabel = "Use today · Ripeness dropping",
+    expiryTomorrowLabel = "Expires tomorrow · Freshness falling",
+    expiryDaysLeftLabel = { days -> if (days == 1) "1 day left" else "$days days left" },
+    ripenessDroppedLabel = { before, now -> "Ripeness decreased since scan: $before% → $now%" },
+    ripenessImprovedLabel = { before, now -> "Ripened since scan: $before% → $now%" },
+    pantryExpiryAlertTitle = { count -> if (count == 1) "1 pantry item expiring soon" else "$count pantry items need attention" },
+    pantryExpiryAlertBody = { names -> "$names losing peak ripeness — use or store carefully." },
+    enableAlertsButton = "Notify Me",
+    alertsActiveBadge = "Alerts On",
+    expiryRemindersTitle = "Freshness & Expiry Reminders",
+    expiryRemindersSubtitle = "Notifies you when scanned fruits or veggies drop in ripeness",
+    expiryNotifChannelName = "Produce Expiry Reminders",
+    expiryNotifTitle = { count -> if (count == 1) "Produce expiring soon" else "$count produce items need attention" },
+    expiryNotifBody = { names -> "Ripeness has dropped for: $names. Open RipeWise to check & cook." }
 )
 
 private val MongolianStrings = UiStrings(
@@ -333,7 +410,40 @@ private val MongolianStrings = UiStrings(
     cancelLabel = "Болих",
     openSettingsLabel = "Тохиргоо нээх",
     flashlightOnContentDesc = "Гар чийдэн унтраах",
-    flashlightOffContentDesc = "Гар чийдэн асаах"
+    flashlightOffContentDesc = "Гар чийдэн асаах",
+    kcalUnit = "ккал",
+    approxCalories = "Ойролцоо илчлэг",
+    per100gLabel = "/ 100г",
+    recipeStepsAiButton = "Хийх заавар · AI-аас асуух",
+    customizeOrderLabel = "Дараалал",
+    customizeOrderTitle = "Мэдээллийн дараалал засах",
+    customizeOrderSubtitle = "Чухал хэсгүүдийг дээш, доош зөөж өөртөө тааруулан эрэмбэлнэ үү.",
+    resetOrderLabel = "Анхны дараалал",
+    doneLabel = "Хадгалах",
+    moveUpContentDesc = "Дээш зөөх",
+    moveDownContentDesc = "Доош зөөх",
+    sectionRipenessLabel = "Боловсролт ба хугацаа",
+    sectionSizeCaloriesLabel = "3D хэмжээ, жин ба илчлэг",
+    sectionStorageLabel = "Зөв хадгалалт",
+    sectionVitaminsNutrientsLabel = "Витамин, эслэг ба эрдэс",
+    sectionHealthBenefitsLabel = "Эрүүл мэндийн ач тус",
+    sectionRecipesLabel = "Зорилгод нийцсэн жор ба хоол",
+    scannedAtLabel = { ts -> "Шалгасан: $ts" },
+    expiryExpiredLabel = "Хугацаа хэтэрсэн · Шалгана уу",
+    expiryUseTodayLabel = "Өнөөдөр хэрэглэ · Боловсролт буурч байна",
+    expiryTomorrowLabel = "Маргааш муудах эрсдэлтэй",
+    expiryDaysLeftLabel = { days -> "$days хоног үлдсэн" },
+    ripenessDroppedLabel = { before, now -> "Шалгаснаас хойш боловсролт буурсан: $before% → $now%" },
+    ripenessImprovedLabel = { before, now -> "Шалгаснаас хойш гүйцэд боловсорсон: $before% → $now%" },
+    pantryExpiryAlertTitle = { count -> "$count бүтээгдэхүүний хугацаа дуусаж байна" },
+    pantryExpiryAlertBody = { names -> "$names боловсролтын түвшин буурч байгаа тул яаралтай хэрэглэнэ үү." },
+    enableAlertsButton = "Сануулга асаах",
+    alertsActiveBadge = "Сануулга идэвхтэй",
+    expiryRemindersTitle = "Муудах хугацааны сануулга",
+    expiryRemindersSubtitle = "Хадгалсан жимс, ногооны боловсролт буурахад мэдэгдэл илгээнэ",
+    expiryNotifChannelName = "Хүнсний хугацааны сануулга",
+    expiryNotifTitle = { count -> "$count хүнсний хугацаа дуусаж байна" },
+    expiryNotifBody = { names -> "$names шинэ чанараа алдаж байна. Агуулахаас шалгаж хоолонд хэрэглэнэ үү." }
 )
 
 fun stringsFor(language: AppLanguage): UiStrings = when (language) {
@@ -375,4 +485,17 @@ private val PreferenceLabelsMn = mapOf(
 fun localizePreferenceOption(option: String, language: AppLanguage): String {
     if (language == AppLanguage.ENGLISH) return option
     return PreferenceLabelsMn[option] ?: option
+}
+
+fun buildRecipeDetailsAiPrompt(
+    produceName: String,
+    weightGrams: Int,
+    suggestion: CookingSuggestion,
+    language: AppLanguage
+): String {
+    return if (language == AppLanguage.MONGOLIAN) {
+        "Надад энэ ${produceName}-аар (~${weightGrams}г) \"${suggestion.title}\" хоолыг (${suggestion.method}, ${suggestion.prepMinutes} мин) хийх бүх нарийн алхмыг зааж өгөөч: орц тус бүрийн хэмжээ, бэлтгэл, температур ба хугацаа, шим тэжээл алдахгүй байх жижиг нууцууд болон ${suggestion.pairing}-тай хэрхэн хослуулахыг дэлгэрэнгүй тайлбарлана уу."
+    } else {
+        "Explain every small detail of making \"${suggestion.title}\" with my $produceName (~${weightGrams}g) using ${suggestion.method} (~${suggestion.prepMinutes} min): exact ingredient measurements, prep steps, temperature & timing, small chef tips to preserve nutrients, and how to pair it with ${suggestion.pairing}."
+    }
 }
